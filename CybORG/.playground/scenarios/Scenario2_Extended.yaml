@@ -1,0 +1,664 @@
+Agents:
+  Blue:
+    AllowedSubnets:
+    - User
+    - Enterprise
+    - Operational
+    - Left
+    - Right
+    INT:
+      Hosts:
+        Defender:
+          Interfaces: All
+          System info: All
+          User info: All
+        Enterprise0:
+          Interfaces: All
+          System info: All
+          User info: All
+        Enterprise1:
+          Interfaces: All
+          System info: All
+          User info: All
+        Enterprise2:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Host0:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Host1:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Host2:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Server0:
+          Interfaces: All
+          System info: All
+          User info: All
+        User0:
+          Interfaces: All
+          System info: All
+          User info: All
+        User1:
+          Interfaces: All
+          System info: All
+          User info: All
+        User2:
+          Interfaces: All
+          System info: All
+          User info: All
+        User3:
+          Interfaces: All
+          System info: All
+          User info: All
+        User4:
+          Interfaces: All
+          System info: All
+          User info: All
+        Left0: &id001
+          Interfaces: All
+          System info: All
+          User info: All
+        Left1: &id002
+          Interfaces: All
+          System info: All
+          User info: All
+        Left2: &id003
+          Interfaces: All
+          System info: All
+          User info: All
+        Left3: &id004
+          Interfaces: All
+          System info: All
+          User info: All
+        Right0: &id005
+          Interfaces: All
+          System info: All
+          User info: All
+        Right1: &id006
+          Interfaces: All
+          System info: All
+          User info: All
+        Right2: &id007
+          Interfaces: All
+          System info: All
+          User info: All
+        Right3: &id008
+          Interfaces: All
+          System info: All
+          User info: All
+    adversary: Red
+    actions:
+    - Sleep
+    - Monitor
+    - Analyse
+    - Remove
+    - DecoyApache
+    - DecoyFemitter
+    - DecoyHarakaSMPT
+    - DecoySmss
+    - DecoySSHD
+    - DecoySvchost
+    - DecoyTomcat
+    - DecoyVsftpd
+    - Restore
+    agent_type: SleepAgent
+    reward_calculator_type: HybridAvailabilityConfidentiality
+    starting_sessions:
+    - hostname: User0
+      name: VeloUser0
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: User1
+      name: VeloUser1
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: User2
+      name: VeloUser2
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: User3
+      name: VeloUser3
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: User4
+      name: VeloUser4
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Enterprise0
+      name: VeloEnterprise0
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Enterprise1
+      name: VeloEnterprise1
+      parent: VeloServer
+      type: VelociraptorClient
+      username: SYSTEM
+    - hostname: Enterprise2
+      name: VeloEnterprise2
+      parent: VeloServer
+      type: VelociraptorClient
+      username: SYSTEM
+    - hostname: Defender
+      name: VeloDefender
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Op_Server0
+      name: VeloOp_Server0
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Op_Host0
+      name: VeloOp_Host0
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Op_Host1
+      name: VeloOp_Host1
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Op_Host2
+      name: VeloOp_Host2
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - artifacts:
+      - NetworkConnections
+      - ProcessCreation
+      hostname: Defender
+      name: VeloServer
+      num_children_sessions: 2
+      type: VelociraptorServer
+      username: ubuntu
+    - hostname: Left0
+      name: VeloLeft0
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Left1
+      name: VeloLeft1
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Left2
+      name: VeloLeft2
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Left3
+      name: VeloLeft3
+      parent: VeloServer
+      type: VelociraptorClient
+      username: ubuntu
+    - hostname: Right0
+      name: VeloRight0
+      parent: VeloServer
+      type: VelociraptorClient
+      username: SYSTEM
+    - hostname: Right1
+      name: VeloRight1
+      parent: VeloServer
+      type: VelociraptorClient
+      username: SYSTEM
+    - hostname: Right2
+      name: VeloRight2
+      parent: VeloServer
+      type: VelociraptorClient
+      username: SYSTEM
+    - hostname: Right3
+      name: VeloRight3
+      parent: VeloServer
+      type: VelociraptorClient
+      username: SYSTEM
+    wrappers: []
+  Green:
+    AllowedSubnets:
+    - User
+    - Enterprise
+    - Operational
+    - Left
+    - Right
+    INT:
+      Hosts:
+        Defender:
+          Interfaces: All
+          System info: All
+          User info: All
+        Enterprise0:
+          Interfaces: All
+          System info: All
+          User info: All
+        Enterprise1:
+          Interfaces: All
+          System info: All
+          User info: All
+        Enterprise2:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Host0:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Host1:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Host2:
+          Interfaces: All
+          System info: All
+          User info: All
+        Op_Server0:
+          Interfaces: All
+          System info: All
+          User info: All
+        User0:
+          Interfaces: All
+          System info: All
+          User info: All
+        User1:
+          Interfaces: All
+          System info: All
+          User info: All
+        User2:
+          Interfaces: All
+          System info: All
+          User info: All
+        User3:
+          Interfaces: All
+          System info: All
+          User info: All
+        User4:
+          Interfaces: All
+          System info: All
+          User info: All
+        Left0: *id001
+        Left1: *id002
+        Left2: *id003
+        Left3: *id004
+        Right0: *id005
+        Right1: *id006
+        Right2: *id007
+        Right3: *id008
+    actions:
+    - Sleep
+    - GreenPingSweep
+    - GreenPortScan
+    - GreenConnection
+    agent_type: SleepAgent
+    reward_calculator_type: None
+    starting_sessions:
+    - hostname: User0
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: User1
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: User2
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: User3
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: User4
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Op_Host0
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Op_Host1
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Op_Host2
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Left0
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Left1
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Left2
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Left3
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Right0
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Right1
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Right2
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    - hostname: Right3
+      name: GreenSession
+      type: green_session
+      username: GreenAgent
+    wrappers: []
+  Red:
+    AllowedSubnets:
+    - User
+    - Enterprise
+    - Operational
+    - Left
+    - Right
+    INT:
+      Hosts:
+        User0:
+          Interfaces: All
+          System info: All
+    actions:
+    - Sleep
+    - DiscoverRemoteSystems
+    - DiscoverNetworkServices
+    - ExploitRemoteService
+    - BlueKeep
+    - EternalBlue
+    - FTPDirectoryTraversal
+    - HarakaRCE
+    - HTTPRFI
+    - HTTPSRFI
+    - SQLInjection
+    - PrivilegeEscalate
+    - Impact
+    - SSHBruteForce
+    agent_type: SleepAgent
+    reward_calculator_type: HybridImpactPwn
+    starting_sessions:
+    - hostname: User0
+      name: RedPhish
+      type: RedAbstractSession
+      username: SYSTEM
+    wrappers: []
+Hosts:
+  Defender:
+    AWS_Info: []
+    image: Velociraptor_Server
+  Enterprise0:
+    AWS_Info: []
+    image: Gateway
+    info:
+      Enterprise0:
+        Interfaces: All
+    ConfidentialityValue: Medium
+    AvailabilityValue: Medium
+  Enterprise1:
+    AWS_Info: []
+    image: Internal
+    info:
+      Enterprise1:
+        Interfaces: All
+    ConfidentialityValue: Medium
+    AvailabilityValue: Medium
+  Enterprise2:
+    AWS_Info: []
+    image: Internal
+    info:
+      Enterprise2:
+        Interfaces: All
+      Op_Server0:
+        Interfaces: IP Address
+    ConfidentialityValue: Medium
+    AvailabilityValue: Medium
+  Op_Host0:
+    AWS_Info: []
+    image: Gateway
+    info:
+      Op_Host0:
+        Interfaces: All
+      Right0:
+        Interfaces: IP Address
+      Right1:
+        Interfaces: IP Address
+  Op_Host1:
+    AWS_Info: []
+    image: Gateway
+    info:
+      Op_Host1:
+        Interfaces: All
+      Right0:
+        Interfaces: IP Address
+      Right1:
+        Interfaces: IP Address
+  Op_Host2:
+    AWS_Info: []
+    image: Gateway
+    info:
+      Op_Host2:
+        Interfaces: All
+      Right2:
+        Interfaces: IP Address
+      Right3:
+        Interfaces: IP Address
+  Op_Server0:
+    AWS_Info: []
+    image: OP_Server
+    info:
+      Op_Server0:
+        Interfaces: All
+        Services:
+        - OTService
+    ConfidentialityValue: Medium
+    AvailabilityValue: High
+  User0:
+    AWS_Info: []
+    image: windows_user_host1
+    info:
+      User0:
+        Interfaces: All
+    ConfidentialityValue: None
+    AvailabilityValue: None
+  User1:
+    AWS_Info: []
+    image: windows_user_host1
+    info:
+      Enterprise1:
+        Interfaces: IP Address
+      User1:
+        Interfaces: All
+    AvailabilityValue: None
+  User2:
+    AWS_Info: []
+    image: windows_user_host2
+    info:
+      Enterprise1:
+        Interfaces: IP Address
+      User2:
+        Interfaces: All
+    AvailabilityValue: None
+  User3:
+    AWS_Info: []
+    image: linux_user_host1
+    info:
+      Enterprise0:
+        Interfaces: IP Address
+      User3:
+        Interfaces: All
+    AvailabilityValue: None
+  User4:
+    AWS_Info: []
+    image: linux_user_host2
+    info:
+      Enterprise0:
+        Interfaces: IP Address
+      User4:
+        Interfaces: All
+    AvailabilityValue: None
+  Left0:
+    AWS_Info: []
+    image: linux_user_host3
+    info:
+      Left0:
+        Interfaces: All
+      User1:
+        Interfaces: IP Address
+      User2:
+        Interfaces: IP Address
+    AvailabilityValue: None
+  Left1:
+    AWS_Info: []
+    image: linux_user_host4
+    info:
+      Left1:
+        Interfaces: All
+      User1:
+        Interfaces: IP Address
+      User2:
+        Interfaces: IP Address
+    AvailabilityValue: None
+  Left2:
+    AWS_Info: []
+    image: linux_user_host3
+    info:
+      Left2:
+        Interfaces: All
+      User3:
+        Interfaces: IP Address
+      User4:
+        Interfaces: IP Address
+    AvailabilityValue: None
+  Left3:
+    AWS_Info: []
+    image: linux_user_host4
+    info:
+      Left3:
+        Interfaces: All
+      User3:
+        Interfaces: IP Address
+      User4:
+        Interfaces: IP Address
+    AvailabilityValue: None
+  Right0:
+    AWS_Info: []
+    image: windows_user_host3
+    info:
+      Right0:
+        Interfaces: All
+      Op_Host0:
+        Interfaces: IP Address
+      Op_Host1:
+        Interfaces: IP Address
+    AvailabilityValue: None
+  Right1:
+    AWS_Info: []
+    image: windows_user_host4
+    info:
+      Right1:
+        Interfaces: All
+      Op_Host0:
+        Interfaces: IP Address
+      Op_Host1:
+        Interfaces: IP Address
+    AvailabilityValue: None
+  Right2:
+    AWS_Info: []
+    image: windows_user_host3
+    info:
+      Right2:
+        Interfaces: All
+      Op_Host2:
+        Interfaces: IP Address
+    AvailabilityValue: None
+  Right3:
+    AWS_Info: []
+    image: windows_user_host4
+    info:
+      Right3:
+        Interfaces: All
+      Op_Host2:
+        Interfaces: IP Address
+    AvailabilityValue: None
+Subnets:
+  Enterprise:
+    Hosts:
+    - Enterprise0
+    - Enterprise1
+    - Enterprise2
+    - Defender
+    NACLs:
+      all:
+        in: all
+        out: all
+    Size: 3
+  Operational:
+    Hosts:
+    - Op_Server0
+    - Op_Host0
+    - Op_Host1
+    - Op_Host2
+    NACLs:
+      User:
+        in: None
+        out: all
+      all:
+        in: all
+        out: all
+    Size: 4
+  User:
+    Hosts:
+    - User0
+    - User1
+    - User2
+    - User3
+    - User4
+    NACLs:
+      all:
+        in: all
+        out: all
+    Size: 5
+  Left:
+    Hosts:
+    - Left0
+    - Left1
+    - Left2
+    - Left3
+    NACLs:
+      all:
+        in: all
+        out: all
+    Size: 4
+  Right:
+    Hosts:
+    - Right0
+    - Right1
+    - Right2
+    - Right3
+    NACLs:
+      Enterprise:
+        in: None
+        out: all
+      all:
+        in: all
+        out: all
+    Size: 4
