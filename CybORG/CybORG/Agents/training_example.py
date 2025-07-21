@@ -7,8 +7,8 @@ from CybORG.Agents.Wrappers.FixedFlatWrapper import FixedFlatWrapper
 from CybORG.Agents.Wrappers.IntListToAction import IntListToActionWrapper
 from CybORG.Agents.Wrappers.OpenAIGymWrapper import OpenAIGymWrapper
 
-MAX_STEPS_PER_GAME = 20
-MAX_EPS = 100
+MAX_STEPS_PER_GAME = 100
+MAX_EPS = 250
 
 def run_training_example(scenario):
     print("Setup")
@@ -24,7 +24,6 @@ def run_training_example(scenario):
     action_count = 0
     agent = TestAgent()
     for i in range(MAX_EPS):  # laying multiple games
-        # print(f"\rTraining Game: {i}", end='', flush=True)
         reward = 0
         for j in range(MAX_STEPS_PER_GAME):  # step in 1 game
             action = agent.get_action(observation, action_space)
@@ -35,10 +34,12 @@ def run_training_example(scenario):
             agent.train(observation)  # training the agent
             observation = next_observation
             if done or j == MAX_STEPS_PER_GAME - 1:
-                # print(f"Training reward: {reward}")
+                if reward != 0.0:
+                    print(f"\rTraining Game: {i}", end='', flush=True)
+                    print(f"\tTraining reward: {reward}")
                 break
         observation = cyborg.reset(agent=agent_name)
         agent.end_episode()
 
 if __name__ == "__main__":
-    run_training_example('Scenario1')
+    run_training_example('Scenario2')
