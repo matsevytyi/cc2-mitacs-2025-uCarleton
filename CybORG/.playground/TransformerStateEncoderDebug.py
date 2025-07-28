@@ -1,3 +1,4 @@
+from math import isnan
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,11 +8,14 @@ from gym.spaces import Dict, Discrete, MultiBinary, Box
 import gym
 import ipaddress
 
+from CybORG.Agents.Wrappers import BlueTableWrapper  # safe to import here
+
 import os, sys
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-class TransformerStateEncoder(BaseFeaturesExtractor):
+# Just for debug purposes, to see how it works
+class TransformerStateEncoderDebug(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Dict, embedding_dim=64, n_heads=4, n_layers=2):
         super().__init__(observation_space, features_dim=embedding_dim)
 
@@ -38,43 +42,6 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         batch_embeddings = []
         print(observations)
         batch_size = len(observations['device_ip'])
-
-        # for i in range(batch_size):
-        #     tokens = []
-
-        #     # IP features (8-dim vector: 4 for subnet, 4 for device IP)
-        #     subnet_ip = self.encode_ip(observations['subnet'][i])  # '10.0.0.0/24'; .split('/')[0] ot convert into parseable
-        #     device_ip = self.encode_ip(observations['device_ip'][i])
-        #     ip_tensor = torch.cat([subnet_ip, device_ip], dim=0)
-        #     ip_embed = self.ip_embed(ip_tensor)
-
-        #     tokens.append(ip_embed)
-
-        #     # categorical string
-        #     for items in observations[i]:
-        #         if isinstance(items, str):
-        #             items = [items]
-        #         for item in items:
-        #             token_id = hash(item) % 1000  # crude hash to token space
-        #             embed = self.token_embed(torch.tensor(token_id))
-        #             tokens.append(embed)
-
-        #     # tokens -> sequence
-        #     tokens = torch.stack(tokens, dim=0)
-
-        #     # add [CLS] token
-        #     cls = self.cls_token.clone()
-        #     tokens = torch.cat([cls, tokens], dim=0)
-
-        #     # Pad to fixed size (lets say 20)
-        #     pad_len = 20 - tokens.shape[0]
-        #     if pad_len > 0:
-        #         padding = torch.zeros(pad_len, self.embedding_dim)
-        #         tokens = torch.cat([tokens, padding], dim=0)
-        #     else:
-        #         tokens = tokens[:20]
-
-        #     batch_embeddings.append(tokens)
 
         for i in range(batch_size):
             tokens = []
@@ -123,7 +90,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         cls_output = encoded[:, 0]
 
 
-        print("Transformer full output:", encoded)
-        print("[CLS] output:", cls_output)
+        #print("Transformer full output:", encoded)
+        #print("[CLS] output:", cls_output)
 
         return cls_output
