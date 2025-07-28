@@ -1,12 +1,13 @@
-from CybORG import CybORG
-from CybORG.Agents import B_lineAgent
-from TransformerWrapper import TransformerWrapper
-
-from stable_baselines3 import DQN
-
 import os, sys, inspect
 
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from CybORG import CybORG
+from CybORG.Agents import B_lineAgent
+
+from CybORG.Agents.Wrappers import TransformerWrapper
+
+from stable_baselines3 import DQN
 
 
 # Load cfg
@@ -19,7 +20,7 @@ if extended:
     # path = "Scenario2_Linear.yaml"
     # path = "Scenario2_Extended.yaml"
 
-    path = os.path.dirname(os.path.dirname(__file__)) + "/scenarios/" + path
+    path = os.path.dirname(os.path.dirname(__file__)) + "/.playground/scenarios/" + path
 else:
 
     path = str(inspect.getfile(CybORG))
@@ -44,6 +45,7 @@ model = DQN(
 )
 
 model.learn(
-    total_timesteps=100_000,
+    total_timesteps=100,
+    tb_log_name="DQN_17",
     log_interval=1  
     )

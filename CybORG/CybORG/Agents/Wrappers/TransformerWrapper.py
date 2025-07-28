@@ -11,7 +11,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from gym.spaces import Dict, Discrete, MultiBinary, Box
 import gym
 
-from TransformerStateEncoder import TransformerStateEncoder
+from CybORG.Agents.Wrappers.TransformerStateEncoder import TransformerStateEncoder
 
 import os, sys
 
@@ -56,15 +56,34 @@ class TransformerWrapper(Env,BaseWrapper):
         self.max_steps = max_steps
         self.step_counter = None
 
-    def step(self,action=None):
+    def step(self,action=None, debug=True):
         obs, reward, done, info = self.env.step(action=action)
     
         self.step_counter += 1
         if self.max_steps is not None and self.step_counter >= self.max_steps:
             done = True
+        
+        print(reward)
+            
+        if debug:    
+            if "episode_reward" not in info:
+                info["episode_reward"] = 0.0
+                info["episode_length"] = 0
+
+            info["episode_reward"] += reward
+            info["episode_length"] += 1
+
+            if done:
+                info["episode"] = {
+                    "r": info["episode_reward"],
+                    "l": info["episode_length"]
+                }
+        print(info)
 
         with torch.no_grad():
             encoded_obs = self.transformer_encoder(None)
+        
+        print()
 
         return encoded_obs.cpu().numpy(), reward, done, info
 
