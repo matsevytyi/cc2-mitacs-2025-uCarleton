@@ -28,7 +28,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         # Positional + CLS token
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embedding_dim))
-        self.positional_embed = nn.Parameter(torch.zeros(1, 20, embedding_dim))  # max 20 tokens
+        self.positional_embed = nn.Parameter(torch.zeros(1, 2048, embedding_dim))  # max 20 tokens
 
         # Transformer Encoder
         encoder_layer = nn.TransformerEncoderLayer(d_model=embedding_dim, nhead=n_heads, batch_first=True)
@@ -40,78 +40,67 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         return ip_bytes / 255.0  # normalize
 
     def forward(self, _):
-
         assert hasattr(self, "_cyborg_env"), "CybORG env not set!"
         assert self._cyborg_env is not torch.NoneType, "CybORG env not init!"
 
-        # Obtauin agent state from full env
         blue_table_env = BlueTableWrapper(self._cyborg_env, output_mode='table')
-
         true_table = blue_table_env.get_agent_state('Blue')
 
-        # Process to dict format with keys like: device_ip, services, etc.
         observations_list = self.preprocess_table(true_table)
         observations = self.lod_2_dol(observations_list)
 
-        batch_embeddings = []
-        print("OBS")
-        print(observations)
-        batch_size = len(observations['device_ip'])
-
-        for i in range(batch_size):
-            tokens = []
-
-            # Step 1: Collect per-host dict from dict of lists (to make it usable with Gym)
+        all_tokens = []  # Will store tokens for all hosts (flattened)
+        for i in range(len(observations['device_ip'])):
             host_dict = {k: v[i] for k, v in observations.items()}
 
-            # Step 2: Encode IP
+            # Encode IP (subnet + device)
             subnet_ip = self.encode_ip(host_dict['subnet'].split('/')[0])
             device_ip = self.encode_ip(host_dict['device_ip'])
             ip_tensor = torch.cat([subnet_ip, device_ip], dim=0)
             ip_embed = self.ip_embed(ip_tensor)
-            tokens.append(ip_embed)
+            host_tokens = [ip_embed]
 
-            # Step 3: Encode categorical strings
+            # Encode other tokens (categorical/textual)
             for key, value in host_dict.items():
                 if key in ['subnet', 'device_ip']:
-                    continue  # already handled
+                    continue
                 items = [value] if isinstance(value, str) else value
                 for item in items:
                     token_id = hash(item) % 1000
                     embed = self.token_embed(torch.tensor(token_id))
-                    tokens.append(embed)
+                    host_tokens.append(embed)
 
-            # Step 4: Padding
-            tokens = torch.stack(tokens, dim=0)
-            cls = self.cls_token.clone().squeeze(0) # shape: (1, 1, D) ->  (1, D)
-            tokens = torch.cat([cls, tokens], dim=0)
+            # Stack per-host tokens (e.g., ~20x64)
+            host_tokens = torch.stack(host_tokens, dim=0)
+            all_tokens.append(host_tokens)
 
-            pad_len = 20 - tokens.shape[0]
-            if pad_len > 0:
-                tokens = torch.cat([tokens, torch.zeros(pad_len, self.embedding_dim)], dim=0)
-            else:
-                tokens = tokens[:20]
+        # Flatten all host tokens into one sequence
+        all_tokens = torch.cat(all_tokens, dim=0)  # (total_tokens_across_hosts, D)
 
-            batch_embeddings.append(tokens)
+        # [CLS] token
+        cls_token = self.cls_token.clone().squeeze(0)  # shape: (1, D)
+        tokens_with_cls = torch.cat([cls_token, all_tokens], dim=0)  # (1 + N, D)
 
+        # positional encoding
+        seq_len = tokens_with_cls.shape[0]
+        if seq_len > self.positional_embed.shape[1]:
+            raise ValueError(f"Input too long: {seq_len} > max {self.positional_embed.shape[1]}")
 
-        batch_embeddings = torch.stack(batch_embeddings, dim=0)  # (B, 20, D)
-        tokens_with_pos = batch_embeddings + self.positional_embed[:, :20]
+        tokens_with_pos = tokens_with_cls + self.positional_embed[:, :seq_len, :].squeeze(0)  # (seq_len, D)
+        tokens_with_pos = tokens_with_pos.unsqueeze(0)  # Add batch dim: (1, seq_len, D)
 
-        # forward through transformer
-        encoded = self.transformer(tokens_with_pos)
+        # Pass through transformer
+        encoded = self.transformer(tokens_with_pos)  # (1, seq_len, D)
+        cls_output = encoded[:, 0, :]  # (1, D)
 
-        # collect [CLS] token in the end
-        cls_output = encoded[:, 0]
+        #print("Transformer full output:", encoded.shape)
+        #print("[CLS] output:", cls_output.shape)
 
-
-        print("Transformer full output:", encoded)
-        print("[CLS] output:", cls_output)
-
-        return cls_output
+        return cls_output.squeeze(0)  # shape: (D,)
     
+
     # HELPER FUNCTIONS:
-    # TODO: optimize
+    # may be optimized
     def preprocess_table(self, raw_table):
         """Convert the full deep Blue/Red table into a list of flat token dicts per host."""
         obs_list = []
@@ -169,3 +158,4 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         for key in list_of_dicts[0].keys():
             collated[key] = [d[key] for d in list_of_dicts]
         return collated
+    

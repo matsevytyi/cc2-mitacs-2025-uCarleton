@@ -4,15 +4,18 @@ from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+
 from stable_baselines3 import DQN
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from gym.spaces import Dict, Discrete, MultiBinary, Box
 import gym
-import ipaddress
 
 from TransformerStateEncoder import TransformerStateEncoder
 
-import numpy as np
+import os, sys
+
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 #Note: basically it is modified vhallengewrapper to use encoder
 class TransformerWrapper(Env,BaseWrapper):
