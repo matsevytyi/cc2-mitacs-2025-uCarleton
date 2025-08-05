@@ -9,6 +9,9 @@ from CybORG.Agents.Wrappers import TransformerWrapper
 
 from stable_baselines3 import DQN
 
+from stable_baselines3.common.logger import configure
+from RewardLoggingCallback import RewardLoggingCallback
+
 
 # Load cfg
 extended = True
@@ -34,18 +37,27 @@ gym_env.reset()
 
 print(cyborg)
 
+# ppo/c51 - try
+
 # Build model
 model = DQN(
     policy='MlpPolicy',
     env=gym_env,
-    verbose=1,
+    verbose=2,
     tensorboard_log="./logs/",
     device='cpu',
     buffer_size=100_000
 )
 
+callback = RewardLoggingCallback(verbose=1)
+
+log_path = "./logs/DQN_17/"
+new_logger = configure(log_path, ["stdout", "tensorboard"])
+model.set_logger(new_logger)
+
 model.learn(
-    total_timesteps=100,
+    total_timesteps=1000,
     tb_log_name="DQN_17",
-    log_interval=1  
+    log_interval=10,
+    callback=callback  
     )
