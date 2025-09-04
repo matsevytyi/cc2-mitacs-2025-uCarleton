@@ -1,4 +1,4 @@
-from gym import Env, spaces
+from gymnasium import Env, spaces
 from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapper,RedTableWrapper,EnumActionWrapper
 
 import torch
@@ -17,7 +17,7 @@ import os, sys
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-#Note: basically it is modified vhallengewrapper to use encoder
+# Note: basically it is modified challengewrapper to use encoder
 class TransformerWrapper(Env,BaseWrapper):
     def __init__(self, agent_name: str, env, agent=None,
             reward_threshold=None, max_steps = None, device='cpu'):
@@ -41,7 +41,8 @@ class TransformerWrapper(Env,BaseWrapper):
         self.transformer_encoder = TransformerStateEncoder(
             observation_space=None,  # Not needed inside encoder since I don't use it, may add that later (may be explicitely passed too)
             embedding_dim=64,
-            cyborg_env=env
+            cyborg_env=env,
+            agent_name=agent_name
         ).to(self.device)
         
 
@@ -56,14 +57,15 @@ class TransformerWrapper(Env,BaseWrapper):
         self.max_steps = max_steps
         self.step_counter = None
 
-    def step(self,action=None, debug=True):
-        obs, reward, done, info = self.env.step(action=action)
+    def step(self,action=None, debug=False):
+        obs, reward, terminated, info = self.env.step(action=action)
     
         self.step_counter += 1
+        truncated = False
         if self.max_steps is not None and self.step_counter >= self.max_steps:
-            done = True
+            truncated = True
         
-        print(reward)
+        print(f"Step {self.step_counter}: action={action}, reward={reward}, done={terminated or truncated}")
             
         if debug:    
             if "episode_reward" not in info:
@@ -73,27 +75,28 @@ class TransformerWrapper(Env,BaseWrapper):
             info["episode_reward"] += reward
             info["episode_length"] += 1
 
-            if done:
+            if terminated:
                 info["episode"] = {
                     "r": info["episode_reward"],
                     "l": info["episode_length"]
                 }
-        print(info)
+            
+            print(info)
 
         with torch.no_grad():
             encoded_obs = self.transformer_encoder(None)
         
         print()
 
-        return encoded_obs.cpu().numpy(), reward, done, info
+        return encoded_obs.cpu().numpy(), reward, terminated, truncated, info
 
-    def reset(self):
+    def reset(self, **kwargs):
         self.step_counter = 0
-        _ = self.env.reset()
+        _ = self.env.reset(**kwargs)
 
         with torch.no_grad():
             encoded_obs = self.transformer_encoder(None)  # env is fetched inside encoder
-        return encoded_obs.cpu().numpy()
+        return encoded_obs.cpu().numpy(), {}
 
     def get_attr(self,attribute:str):
         return self.env.get_attr(attribute)
