@@ -1,5 +1,6 @@
 import numpy as np
-from gym import spaces, Env
+import gymnasium as gym
+from gymnasium import spaces, Env
 from typing import Union, List
 from prettytable import PrettyTable
 
@@ -30,7 +31,7 @@ class OpenAIGymWrapper(Env, BaseWrapper):
         info = vars(result)
         return np.array(result.observation), result.reward, result.done, info
 
-    def reset(self, agent=None):
+    def reset(self,  **kwargs):
         result = self.env.reset(self.agent_name)
         result.action_space = self.action_space_change(result.action_space)
         result.observation = self.observation_change(result.observation)

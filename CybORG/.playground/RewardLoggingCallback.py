@@ -8,16 +8,10 @@ class RewardLoggingCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         
-        #print(self.locals)
-        
         reward = self.locals["rewards"][0]
         done = self.locals["dones"][0]
 
         self.current_episode_reward += reward
-        
-        #print(reward, done, self.current_episode_reward)
-
-        #self.logger.record(self.current_episode_reward)
         
         self.logger.dump(self.current_episode_reward)
         if self.verbose:
