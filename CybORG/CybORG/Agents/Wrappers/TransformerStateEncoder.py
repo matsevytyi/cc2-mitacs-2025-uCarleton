@@ -8,19 +8,20 @@ from gym.spaces import Dict, Discrete, MultiBinary, Box
 import gym
 import ipaddress
 
-from CybORG.Agents.Wrappers import BlueTableWrapper  # safe to import here
+from CybORG.Agents.Wrappers import BlueTableWrapper
 
 import os, sys
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 class TransformerStateEncoder(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Dict, embedding_dim=64, n_heads=4, n_layers=2, cyborg_env=None):
+    def __init__(self, observation_space: gym.spaces.Dict, embedding_dim=64, n_heads=4, n_layers=2, cyborg_env=None, agent_name=None):
         super().__init__(observation_space, features_dim=embedding_dim)
 
         self.embedding_dim = embedding_dim
         self._cyborg_env = cyborg_env
         self._has_reset = False
+        self._agent_name = agent_name
 
         # Embeddings
         self.ip_embed = nn.Linear(8, embedding_dim)  # IP as 8-dim (4 bytes subnet, 4 bytes host)
@@ -43,8 +44,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         assert hasattr(self, "_cyborg_env"), "CybORG env not set!"
         assert self._cyborg_env is not torch.NoneType, "CybORG env not init!"
 
-        blue_table_env = BlueTableWrapper(self._cyborg_env, output_mode='table')
-        true_table = blue_table_env.get_agent_state('Blue')
+        table_env = BlueTableWrapper(self._cyborg_env, output_mode='table')
+        true_table = table_env.get_agent_state(self._agent_name)
 
         observations_list = self.preprocess_table(true_table)
         observations = self.lod_2_dol(observations_list)
