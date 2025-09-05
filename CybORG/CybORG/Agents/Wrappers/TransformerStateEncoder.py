@@ -51,12 +51,12 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         true_table = self.table_env.get_agent_state(self._agent_name)
 
-
         observations_list = self.preprocess_table(true_table)
         observations = self.lod_2_dol(observations_list)
 
         all_tokens = []  # Will store tokens for all hosts (flattened)
         for i in range(len(observations['device_ip'])):
+
             host_dict = {k: v[i] for k, v in observations.items()}
 
             # Encode IP (subnet + device)
@@ -99,12 +99,14 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         encoded = self.transformer(tokens_with_pos)  # (1, seq_len, D)
         cls_output = encoded[:, 0, :]  # (1, D)
 
-        cls_output = F.layer_norm(cls_output, cls_output.shape)
+        mean_output = encoded[:, 1:, :].mean(dim=1)  # exclude [CLS]
+        final_output = torch.cat([cls_output, mean_output], dim=-1)
+        
+        final_output = F.layer_norm(final_output, final_output.shape)
 
-        #print("Transformer full output:", encoded.shape)
-        #print("[CLS] output:", cls_output.shape)
+        # cls_output = F.layer_norm(cls_output, cls_output.shape) # and return cls_output.squeeze(0) <=> previous
 
-        return cls_output.squeeze(0)  # shape: (D,)
+        return final_output.squeeze(0)  # shape: (D,)
     
 
     # HELPER FUNCTIONS:
