@@ -15,13 +15,18 @@ import os, sys
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 class TransformerStateEncoder(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Dict, embedding_dim=64, n_heads=4, n_layers=2, cyborg_env=None, agent_name=None):
+    def __init__(self, observation_space: gym.spaces.Dict, embedding_dim=128, n_heads=8, n_layers=3, cyborg_env=None, agent_name=None):
         super().__init__(observation_space, features_dim=embedding_dim)
 
         self.embedding_dim = embedding_dim
         self._cyborg_env = cyborg_env
         self._has_reset = False
         self._agent_name = agent_name
+
+        if self._cyborg_env is not None:
+            self.table_env = BlueTableWrapper(self._cyborg_env, output_mode='table')
+        else:
+            self.table_env = None
 
         # Embeddings
         self.ip_embed = nn.Linear(8, embedding_dim)  # IP as 8-dim (4 bytes subnet, 4 bytes host)
@@ -44,8 +49,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         assert hasattr(self, "_cyborg_env"), "CybORG env not set!"
         assert self._cyborg_env is not torch.NoneType, "CybORG env not init!"
 
-        table_env = BlueTableWrapper(self._cyborg_env, output_mode='table')
-        true_table = table_env.get_agent_state(self._agent_name)
+        true_table = self.table_env.get_agent_state(self._agent_name)
+
 
         observations_list = self.preprocess_table(true_table)
         observations = self.lod_2_dol(observations_list)
@@ -93,6 +98,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         # Pass through transformer
         encoded = self.transformer(tokens_with_pos)  # (1, seq_len, D)
         cls_output = encoded[:, 0, :]  # (1, D)
+
+        cls_output = F.layer_norm(cls_output, cls_output.shape)
 
         #print("Transformer full output:", encoded.shape)
         #print("[CLS] output:", cls_output.shape)
