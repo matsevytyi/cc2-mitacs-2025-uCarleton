@@ -19,9 +19,9 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 # Note: basically it is modified challengewrapper to use encoder
 class TransformerWrapper(Env,BaseWrapper):
-    def __init__(self, agent_name: str, env, agent=None,
+    def __init__(self, agent_name: str, raw_cyborg, agent=None,
             reward_threshold=None, max_steps = None, device='cpu'):
-        super().__init__(env, agent)
+        super().__init__(raw_cyborg, agent)
         self.agent_name = agent_name
         if agent_name.lower() == 'red':
             table_wrapper = RedTableWrapper
@@ -30,7 +30,7 @@ class TransformerWrapper(Env,BaseWrapper):
         else:
             raise ValueError('Invalid Agent Name')
 
-        env = table_wrapper(env, output_mode='vector')
+        env = table_wrapper(raw_cyborg, output_mode='vector')
         env = EnumActionWrapper(env)
         env = OpenAIGymWrapper(agent_name=agent_name, env=env)
 
@@ -38,10 +38,14 @@ class TransformerWrapper(Env,BaseWrapper):
         self.action_space = self.env.action_space
 
         self.device = device
+
+        embedding_dim = 64 # transformer embedding dimension
+        observation_shape_size = embedding_dim * 2 # or *1 depending on the architecture
+
         self.transformer_encoder = TransformerStateEncoder(
             observation_space=None,  # Not needed inside encoder since I don't use it, may add that later (may be explicitely passed too)
-            embedding_dim=64,
-            cyborg_env=env,
+            embedding_dim=embedding_dim,
+            cyborg_env=raw_cyborg,
             agent_name=agent_name
         ).to(self.device)
         
@@ -49,7 +53,7 @@ class TransformerWrapper(Env,BaseWrapper):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(64,),  # embedding_dim from transformer encoder
+            shape=(observation_shape_size, ),  # embedding_dim from transformer encoder
             dtype=np.float32
         )
 
@@ -65,7 +69,7 @@ class TransformerWrapper(Env,BaseWrapper):
         if self.max_steps is not None and self.step_counter >= self.max_steps:
             truncated = True
         
-        print(f"Step {self.step_counter}: action={action}, reward={reward}, done={terminated or truncated}")
+        #print(f"Step {self.step_counter}: action={action}, reward={reward}, done={terminated or truncated}")
             
         if debug:    
             if "episode_reward" not in info:
@@ -81,12 +85,10 @@ class TransformerWrapper(Env,BaseWrapper):
                     "l": info["episode_length"]
                 }
             
-            print(info)
+            #print(info)
 
         with torch.no_grad():
             encoded_obs = self.transformer_encoder(None)
-        
-        print()
 
         return encoded_obs.cpu().numpy(), reward, terminated, truncated, info
 
