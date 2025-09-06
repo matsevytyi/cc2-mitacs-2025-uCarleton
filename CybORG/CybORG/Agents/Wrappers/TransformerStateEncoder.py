@@ -9,104 +9,156 @@ import gym
 import ipaddress
 
 from CybORG.Agents.Wrappers import BlueTableWrapper
+from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapper,RedTableWrapper,EnumActionWrapper
 
 import os, sys
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 class TransformerStateEncoder(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Dict, embedding_dim=128, n_heads=8, n_layers=3, cyborg_env=None, agent_name=None):
+    # def __init__(self, observation_space: gym.spaces.Dict, embedding_dim=128, n_heads=8, n_layers=3, cyborg_env=None, agent_name=None):
+    #     super().__init__(observation_space, features_dim=embedding_dim)
+
+    #     self.embedding_dim = embedding_dim
+    #     self._cyborg_env = cyborg_env
+    #     self._has_reset = False
+    #     self._agent_name = agent_name
+
+    #     if self._cyborg_env is not None:
+    #         self.table_env = BlueTableWrapper(self._cyborg_env, output_mode='table')
+    #     else:
+    #         self.table_env = None
+
+            
+    #     #print(self.table_env.observation_space)
+
+    #     # Embeddings TODO - modified
+    #     #self.ip_embed = nn.Linear(8, embedding_dim)  # IP as 8-dim (4 bytes subnet, 4 bytes host)
+    #     self.ip_byte_embed = nn.Embedding(256, embedding_dim // 4)
+
+    #     self.token_embed = nn.Embedding(1000, embedding_dim)  # for services, OS, vulns, etc.
+
+    #     # Positional + CLS token
+    #     self.cls_token = nn.Parameter(torch.zeros(1, 1, embedding_dim))
+    #     self.positional_embed = nn.Parameter(torch.zeros(1, 2048, embedding_dim))  # max 20 tokens
+
+    #     # Transformer Encoder
+    #     encoder_layer = nn.TransformerEncoderLayer(d_model=embedding_dim, nhead=n_heads, batch_first=True)
+    #     self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+
+    def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2):
         super().__init__(observation_space, features_dim=embedding_dim)
 
         self.embedding_dim = embedding_dim
-        self._cyborg_env = cyborg_env
-        self._has_reset = False
-        self._agent_name = agent_name
 
-        if self._cyborg_env is not None:
-            self.table_env = BlueTableWrapper(self._cyborg_env, output_mode='table')
-        else:
-            self.table_env = None
+        # Each host = 4 bits, embed them into embedding_dim
+        self.host_embed = nn.Linear(4, embedding_dim)
 
-        # Embeddings
-        self.ip_embed = nn.Linear(8, embedding_dim)  # IP as 8-dim (4 bytes subnet, 4 bytes host)
-        self.token_embed = nn.Embedding(1000, embedding_dim)  # for services, OS, vulns, etc.
-
-        # Positional + CLS token
+        # CLS token + positional encoding
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embedding_dim))
-        self.positional_embed = nn.Parameter(torch.zeros(1, 2048, embedding_dim))  # max 20 tokens
+        self.positional_embed = nn.Parameter(torch.zeros(1, 20, embedding_dim))  # supports up to 20 hosts
 
-        # Transformer Encoder
-        encoder_layer = nn.TransformerEncoderLayer(d_model=embedding_dim, nhead=n_heads, batch_first=True)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embedding_dim,
+            nhead=n_heads,
+            batch_first=True
+        )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
-
+        
     def encode_ip(self, ip_str):
         """Convert IP to tensor of bytes"""
         ip_bytes = torch.tensor([int(x) for x in ip_str.split('.')], dtype=torch.float32)
         return ip_bytes / 255.0  # normalize
+    
+    def forward(self, obs: torch.Tensor):
+        """
+        obs: shape (batch, 52) = flattened bit vector
+        """
+        batch_size = obs.shape[0]
 
-    def forward(self, _):
-        assert hasattr(self, "_cyborg_env"), "CybORG env not set!"
-        assert self._cyborg_env is not torch.NoneType, "CybORG env not init!"
+        # Reshape into hosts (batch, num_hosts, 4)
+        num_hosts = obs.shape[1] // 4
+        host_chunks = obs.view(batch_size, num_hosts, 4).float()
 
-        true_table = self.table_env.get_agent_state(self._agent_name)
+        # Embed each host’s 4-bit state
+        host_tokens = self.host_embed(host_chunks)  # (batch, num_hosts, D)
 
-        observations_list = self.preprocess_table(true_table)
-        observations = self.lod_2_dol(observations_list)
+        # Add CLS token
+        cls_token = self.cls_token.expand(batch_size, -1, -1)  # (batch, 1, D)
+        tokens = torch.cat([cls_token, host_tokens], dim=1)  # (batch, 1+num_hosts, D)
 
-        all_tokens = []  # Will store tokens for all hosts (flattened)
-        for i in range(len(observations['device_ip'])):
-
-            host_dict = {k: v[i] for k, v in observations.items()}
-
-            # Encode IP (subnet + device)
-            subnet_ip = self.encode_ip(host_dict['subnet'].split('/')[0])
-            device_ip = self.encode_ip(host_dict['device_ip'])
-            ip_tensor = torch.cat([subnet_ip, device_ip], dim=0)
-            ip_embed = self.ip_embed(ip_tensor)
-            host_tokens = [ip_embed]
-
-            # Encode other tokens (categorical/textual)
-            for key, value in host_dict.items():
-                if key in ['subnet', 'device_ip']:
-                    continue
-                items = [value] if isinstance(value, str) else value
-                for item in items:
-                    token_id = hash(item) % 1000
-                    embed = self.token_embed(torch.tensor(token_id))
-                    host_tokens.append(embed)
-
-            # Stack per-host tokens (e.g., ~20x64)
-            host_tokens = torch.stack(host_tokens, dim=0)
-            all_tokens.append(host_tokens)
-
-        # Flatten all host tokens into one sequence
-        all_tokens = torch.cat(all_tokens, dim=0)  # (total_tokens_across_hosts, D)
-
-        # [CLS] token
-        cls_token = self.cls_token.clone().squeeze(0)  # shape: (1, D)
-        tokens_with_cls = torch.cat([cls_token, all_tokens], dim=0)  # (1 + N, D)
-
-        # positional encoding
-        seq_len = tokens_with_cls.shape[0]
-        if seq_len > self.positional_embed.shape[1]:
-            raise ValueError(f"Input too long: {seq_len} > max {self.positional_embed.shape[1]}")
-
-        tokens_with_pos = tokens_with_cls + self.positional_embed[:, :seq_len, :].squeeze(0)  # (seq_len, D)
-        tokens_with_pos = tokens_with_pos.unsqueeze(0)  # Add batch dim: (1, seq_len, D)
+        # Add positional encodings
+        tokens = tokens + self.positional_embed[:, :tokens.size(1), :]
 
         # Pass through transformer
-        encoded = self.transformer(tokens_with_pos)  # (1, seq_len, D)
-        cls_output = encoded[:, 0, :]  # (1, D)
+        encoded = self.transformer(tokens)  # (batch, seq_len, D)
 
-        mean_output = encoded[:, 1:, :].mean(dim=1)  # exclude [CLS]
-        final_output = torch.cat([cls_output, mean_output], dim=-1)
+        # Take CLS output
+        cls_output = encoded[:, 0, :]  # (batch, D)
+        return cls_output
+
+    # def forward(self, _):
+    #     assert hasattr(self, "_cyborg_env"), "CybORG env not set!"
+    #     assert self._cyborg_env is not torch.NoneType, "CybORG env not init!"
+
+    #     true_table = self.table_env.get_agent_state(self._agent_name)
+
+    #     observations_list = self.preprocess_table(true_table)
+    #     observations = self.lod_2_dol(observations_list)
+
+    #     all_tokens = []  # Will store tokens for all hosts (flattened)
+    #     for i in range(len(observations['device_ip'])):
+
+    #         host_dict = {k: v[i] for k, v in observations.items()}
+
+    #         # Encode IP (subnet + device)
+    #         subnet_ip = self.encode_ip(host_dict['subnet'].split('/')[0])
+    #         device_ip = self.encode_ip(host_dict['device_ip'])
+    #         ip_tensor = torch.cat([subnet_ip, device_ip], dim=0)
+    #         ip_embed = self.ip_embed(ip_tensor)
+    #         host_tokens = [ip_embed]
+
+    #         # Encode other tokens (categorical/textual)
+    #         for key, value in host_dict.items():
+    #             if key in ['subnet', 'device_ip']:
+    #                 continue
+    #             items = [value] if isinstance(value, str) else value
+    #             for item in items:
+    #                 token_id = hash(item) % 1000
+    #                 embed = self.token_embed(torch.tensor(token_id))
+    #                 host_tokens.append(embed)
+
+    #         # Stack per-host tokens (e.g., ~20x64)
+    #         host_tokens = torch.stack(host_tokens, dim=0)
+    #         all_tokens.append(host_tokens)
+
+    #     # Flatten all host tokens into one sequence
+    #     all_tokens = torch.cat(all_tokens, dim=0)  # (total_tokens_across_hosts, D)
+
+    #     # [CLS] token
+    #     cls_token = self.cls_token.clone().squeeze(0)  # shape: (1, D)
+    #     tokens_with_cls = torch.cat([cls_token, all_tokens], dim=0)  # (1 + N, D)
+
+    #     # positional encoding
+    #     seq_len = tokens_with_cls.shape[0]
+    #     if seq_len > self.positional_embed.shape[1]:
+    #         raise ValueError(f"Input too long: {seq_len} > max {self.positional_embed.shape[1]}")
+
+    #     tokens_with_pos = tokens_with_cls + self.positional_embed[:, :seq_len, :].squeeze(0)  # (seq_len, D)
+    #     tokens_with_pos = tokens_with_pos.unsqueeze(0)  # Add batch dim: (1, seq_len, D)
+
+    #     # Pass through transformer
+    #     encoded = self.transformer(tokens_with_pos)  # (1, seq_len, D)
+    #     cls_output = encoded[:, 0, :]  # (1, D)
+
+    #     mean_output = encoded[:, 1:, :].mean(dim=1)  # exclude [CLS]
+    #     final_output = torch.cat([cls_output, mean_output], dim=-1)
         
-        final_output = F.layer_norm(final_output, final_output.shape)
+    #     final_output = F.layer_norm(final_output, final_output.shape)
 
-        # cls_output = F.layer_norm(cls_output, cls_output.shape) # and return cls_output.squeeze(0) <=> previous
+    #     # cls_output = F.layer_norm(cls_output, cls_output.shape) # and return cls_output.squeeze(0) <=> previous
 
-        return final_output.squeeze(0)  # shape: (D,)
+    #     return final_output.squeeze(0)  # shape: (D,)
     
 
     # HELPER FUNCTIONS:

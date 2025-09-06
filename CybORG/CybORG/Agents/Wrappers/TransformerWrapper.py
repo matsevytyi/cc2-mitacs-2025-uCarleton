@@ -40,13 +40,13 @@ class TransformerWrapper(Env,BaseWrapper):
         self.device = device
 
         embedding_dim = 64 # transformer embedding dimension
-        observation_shape_size = embedding_dim * 2 # or *1 depending on the architecture
+        observation_shape_size = embedding_dim # or *1 depending on the architecture
 
         self.transformer_encoder = TransformerStateEncoder(
             observation_space=None,  # Not needed inside encoder since I don't use it, may add that later (may be explicitely passed too)
             embedding_dim=embedding_dim,
-            cyborg_env=raw_cyborg,
-            agent_name=agent_name
+            #cyborg_env=raw_cyborg,
+            #agent_name=agent_name
         ).to(self.device)
         
 
@@ -68,36 +68,22 @@ class TransformerWrapper(Env,BaseWrapper):
         truncated = False
         if self.max_steps is not None and self.step_counter >= self.max_steps:
             truncated = True
+            
+        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         
-        #print(f"Step {self.step_counter}: action={action}, reward={reward}, done={terminated or truncated}")
-            
-        if debug:    
-            if "episode_reward" not in info:
-                info["episode_reward"] = 0.0
-                info["episode_length"] = 0
-
-            info["episode_reward"] += reward
-            info["episode_length"] += 1
-
-            if terminated:
-                info["episode"] = {
-                    "r": info["episode_reward"],
-                    "l": info["episode_length"]
-                }
-            
-            #print(info)
-
         with torch.no_grad():
-            encoded_obs = self.transformer_encoder(None)
+            encoded_obs = self.transformer_encoder(obs_tensor)
 
         return encoded_obs.cpu().numpy(), reward, terminated, truncated, info
 
     def reset(self, **kwargs):
         self.step_counter = 0
-        _ = self.env.reset(**kwargs)
+        obs = self.env.reset(**kwargs)
+        
+        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         with torch.no_grad():
-            encoded_obs = self.transformer_encoder(None)  # env is fetched inside encoder
+            encoded_obs = self.transformer_encoder(obs_tensor)
         return encoded_obs.cpu().numpy(), {}
 
     def get_attr(self,attribute:str):
