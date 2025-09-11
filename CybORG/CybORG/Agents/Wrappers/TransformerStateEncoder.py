@@ -8,6 +8,8 @@ from gym.spaces import Dict, Discrete, MultiBinary, Box
 import gym
 import ipaddress
 
+import numpy as np
+
 from CybORG.Agents.Wrappers import BlueTableWrapper
 from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapper,RedTableWrapper,EnumActionWrapper
 
@@ -49,43 +51,85 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2):
         super().__init__(observation_space, features_dim=embedding_dim)
 
-        self.embedding_dim = embedding_dim
+        self.embedding_dim = embedding_dim*2 # 1, 2, 3, 4 depending on amount of features
 
         # Each host = 4 bits, embed them into embedding_dim
-        self.host_embed = nn.Linear(4, embedding_dim)
+        self.obs_embed = nn.Linear(4, embedding_dim)
+        
+        self.ip_byte_embed = nn.Embedding(256, embedding_dim // 4)
 
         # CLS token + positional encoding
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embedding_dim))
-        self.positional_embed = nn.Parameter(torch.zeros(1, 20, embedding_dim))  # supports up to 20 hosts
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.embedding_dim))
+        self.positional_embed = nn.Parameter(torch.zeros(1, 20, self.embedding_dim))  # supports up to 20 hosts
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embedding_dim,
+            d_model=self.embedding_dim,
             nhead=n_heads,
             batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
         
-    def encode_ip(self, ip_str):
-        """Convert IP to tensor of bytes"""
-        ip_bytes = torch.tensor([int(x) for x in ip_str.split('.')], dtype=torch.float32)
-        return ip_bytes / 255.0  # normalize
-    
-    def forward(self, obs: torch.Tensor):
+    def embed_ip(self, ip_str: str) -> torch.Tensor:
+        ip_bytes = [int(x) for x in ip_str.split('.')]  # 4 octets
+        embeds = [self.ip_byte_embed(torch.tensor(b)) for b in ip_bytes]  # 4 x (D_per_byte)
+        
+        # weights: first octet highest, last lowest
+        weights = torch.tensor([8.0, 4.0, 2.0, 1.0]).unsqueeze(-1)  # shape [4, 1]
+        
+        # apply weights to each embedding
+        weighted_embeds = [emb * w for emb, w in zip(embeds, weights)]
+        
+        # concatenate to single vector
+        ip_embed = torch.cat(weighted_embeds, dim=0)  # shape [4 * D_per_byte]
+        
+        return ip_embed
+
+        
+    def forward(self, obs: dict, host_order):
         """
-        obs: shape (batch, 52) = flattened bit vector
+        obs: dict = flattened bit vector
         """
-        batch_size = obs.shape[0]
+        
+        batch_size = 1 # CC2 step default
+        host_tokens_list = []
 
         # Reshape into hosts (batch, num_hosts, 4)
-        num_hosts = obs.shape[1] // 4
-        host_chunks = obs.view(batch_size, num_hosts, 4).float()
-
-        # Embed each host’s 4-bit state
-        host_tokens = self.host_embed(host_chunks)  # (batch, num_hosts, D)
+        
+        for name in host_order:
+            if name not in obs:
+                continue
+            
+            # obs
+            obs_chunks = obs.get(name).get('obs').reshape(batch_size, -1, 4)
+            # print("obs shape before ", obs_chunks.shape)
+            # print("obs before ", obs_chunks)
+            obs_chunks = torch.tensor(obs_chunks, dtype=torch.float32)
+            obs_chunks = self.obs_embed(obs_chunks) # [1, 1, D_obs]
+            # print("obs shape after ", obs_chunks.shape)
+            # print("obs after ", obs_chunks)
+            
+            # ips
+            ip_chunks = obs.get(name).get('ips')[0]
+            # print("ip shape before ", np.shape(ip_chunks))
+            # print("ip before ", ip_chunks)
+            ip_chunks = self.embed_ip(ip_chunks).unsqueeze(0).unsqueeze(0) # [1, 1, D_ip]
+            # print("ip shape after ", ip_chunks.shape)
+            # print("ip after ", ip_chunks)
+            
+            # ports
+            
+            # processes
+            
+            
+            # combine together (stack or concat)
+            host_token = torch.cat([obs_chunks, ip_chunks], dim=-1) # [1, 1, D_ip+obs] or [1, 1, D_total]
+            host_tokens_list.append(host_token)
+            
+        host_tokens = torch.cat(host_tokens_list, dim=1) # [1, num_hosts, D_total]
 
         # Add CLS token
-        cls_token = self.cls_token.expand(batch_size, -1, -1)  # (batch, 1, D)
-        tokens = torch.cat([cls_token, host_tokens], dim=1)  # (batch, 1+num_hosts, D)
+        cls_token = self.cls_token.expand(batch_size, -1, -1)  # [1, 1, D_total]
+        tokens = torch.cat([cls_token, host_tokens], dim=1)  # [1, 1 + num_hosts, D_total]
 
         # Add positional encodings
         tokens = tokens + self.positional_embed[:, :tokens.size(1), :]
@@ -97,69 +141,6 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         cls_output = encoded[:, 0, :]  # (batch, D)
         return cls_output
 
-    # def forward(self, _):
-    #     assert hasattr(self, "_cyborg_env"), "CybORG env not set!"
-    #     assert self._cyborg_env is not torch.NoneType, "CybORG env not init!"
-
-    #     true_table = self.table_env.get_agent_state(self._agent_name)
-
-    #     observations_list = self.preprocess_table(true_table)
-    #     observations = self.lod_2_dol(observations_list)
-
-    #     all_tokens = []  # Will store tokens for all hosts (flattened)
-    #     for i in range(len(observations['device_ip'])):
-
-    #         host_dict = {k: v[i] for k, v in observations.items()}
-
-    #         # Encode IP (subnet + device)
-    #         subnet_ip = self.encode_ip(host_dict['subnet'].split('/')[0])
-    #         device_ip = self.encode_ip(host_dict['device_ip'])
-    #         ip_tensor = torch.cat([subnet_ip, device_ip], dim=0)
-    #         ip_embed = self.ip_embed(ip_tensor)
-    #         host_tokens = [ip_embed]
-
-    #         # Encode other tokens (categorical/textual)
-    #         for key, value in host_dict.items():
-    #             if key in ['subnet', 'device_ip']:
-    #                 continue
-    #             items = [value] if isinstance(value, str) else value
-    #             for item in items:
-    #                 token_id = hash(item) % 1000
-    #                 embed = self.token_embed(torch.tensor(token_id))
-    #                 host_tokens.append(embed)
-
-    #         # Stack per-host tokens (e.g., ~20x64)
-    #         host_tokens = torch.stack(host_tokens, dim=0)
-    #         all_tokens.append(host_tokens)
-
-    #     # Flatten all host tokens into one sequence
-    #     all_tokens = torch.cat(all_tokens, dim=0)  # (total_tokens_across_hosts, D)
-
-    #     # [CLS] token
-    #     cls_token = self.cls_token.clone().squeeze(0)  # shape: (1, D)
-    #     tokens_with_cls = torch.cat([cls_token, all_tokens], dim=0)  # (1 + N, D)
-
-    #     # positional encoding
-    #     seq_len = tokens_with_cls.shape[0]
-    #     if seq_len > self.positional_embed.shape[1]:
-    #         raise ValueError(f"Input too long: {seq_len} > max {self.positional_embed.shape[1]}")
-
-    #     tokens_with_pos = tokens_with_cls + self.positional_embed[:, :seq_len, :].squeeze(0)  # (seq_len, D)
-    #     tokens_with_pos = tokens_with_pos.unsqueeze(0)  # Add batch dim: (1, seq_len, D)
-
-    #     # Pass through transformer
-    #     encoded = self.transformer(tokens_with_pos)  # (1, seq_len, D)
-    #     cls_output = encoded[:, 0, :]  # (1, D)
-
-    #     mean_output = encoded[:, 1:, :].mean(dim=1)  # exclude [CLS]
-    #     final_output = torch.cat([cls_output, mean_output], dim=-1)
-        
-    #     final_output = F.layer_norm(final_output, final_output.shape)
-
-    #     # cls_output = F.layer_norm(cls_output, cls_output.shape) # and return cls_output.squeeze(0) <=> previous
-
-    #     return final_output.squeeze(0)  # shape: (D,)
-    
 
     # HELPER FUNCTIONS:
     # may be optimized
