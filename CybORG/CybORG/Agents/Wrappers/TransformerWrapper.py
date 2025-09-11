@@ -29,10 +29,17 @@ class TransformerWrapper(Env,BaseWrapper):
             table_wrapper = BlueTableWrapper
         else:
             raise ValueError('Invalid Agent Name')
+        
+        self.raw_cyborg = raw_cyborg
+        
+        self.host_order = tuple(self.raw_cyborg.environment_controller.state.hosts.keys()) # to freeze the order
 
+        # upscale the wrapper similarly to challenge wrapper
         env = table_wrapper(raw_cyborg, output_mode='vector')
         env = EnumActionWrapper(env)
         env = OpenAIGymWrapper(agent_name=agent_name, env=env)
+        
+        self.table_env = table_wrapper(raw_cyborg, output_mode='table')
 
         self.env = env
         self.action_space = self.env.action_space
@@ -40,13 +47,11 @@ class TransformerWrapper(Env,BaseWrapper):
         self.device = device
 
         embedding_dim = 64 # transformer embedding dimension
-        observation_shape_size = embedding_dim # or *1 depending on the architecture
+        observation_shape_size = embedding_dim*2 # or *1 depending on the architecture
 
         self.transformer_encoder = TransformerStateEncoder(
-            observation_space=None,  # Not needed inside encoder since I don't use it, may add that later (may be explicitely passed too)
+            observation_space=None,
             embedding_dim=embedding_dim,
-            #cyborg_env=raw_cyborg,
-            #agent_name=agent_name
         ).to(self.device)
         
 
@@ -61,18 +66,23 @@ class TransformerWrapper(Env,BaseWrapper):
         self.max_steps = max_steps
         self.step_counter = None
 
-    def step(self,action=None, debug=False):
+    def step(self,action=None, debug=False, verbose=False):
         obs, reward, terminated, info = self.env.step(action=action)
+        
+        # self.env.env.env.env.env is same as active self.raw_cyborg
+
+        # enrich obs with other contextual information
+        obs = self.extract_host_state(raw_cyborg=self.env.env.env.env.env, obs=obs)
+        if verbose:
+            print('step obs', obs)
     
         self.step_counter += 1
         truncated = False
         if self.max_steps is not None and self.step_counter >= self.max_steps:
             truncated = True
-            
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         
         with torch.no_grad():
-            encoded_obs = self.transformer_encoder(obs_tensor)
+            encoded_obs = self.transformer_encoder(obs, self.host_order)
 
         return encoded_obs.cpu().numpy(), reward, terminated, truncated, info
 
@@ -80,10 +90,12 @@ class TransformerWrapper(Env,BaseWrapper):
         self.step_counter = 0
         obs = self.env.reset(**kwargs)
         
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        # enrich obs with other contextual information
+        obs = self.extract_host_state(raw_cyborg=self.env.env.env.env.env, obs=obs)
 
         with torch.no_grad():
-            encoded_obs = self.transformer_encoder(obs_tensor)
+            encoded_obs = self.transformer_encoder(obs, self.host_order)
+            
         return encoded_obs.cpu().numpy(), {}
 
     def get_attr(self,attribute:str):
@@ -109,3 +121,86 @@ class TransformerWrapper(Env,BaseWrapper):
 
     def get_reward_breakdown(self, agent: str):
         return self.get_attr('get_reward_breakdown')(agent)
+
+    def extract_host_state(self, raw_cyborg, obs):
+        hosts_dict = {}
+        for i, hname in enumerate(self.host_order):
+            hstate = raw_cyborg.environment_controller.state.hosts[hname]
+            
+            obs_chunk = obs[4 * i : 4 * (i + 1)] # original signal
+            
+            ips = [
+                iface.ip_address.__str__()
+                for iface in hstate.interfaces
+                if iface.name.startswith("eth")
+            ]
+            
+            ports = np.array([
+                conn.get("local_port")
+                for proc in hstate.processes
+                for conn in proc.connections
+            ])
+            
+            processes = np.array([proc.name for proc in hstate.processes])
+
+            # hosts_dict[hname] = {
+            #     "obs": obs_chunk,
+            #     "ips": ips,
+            #     "ports": ports,
+            #     "processes": processes,
+            # }
+            
+            hosts_dict[hname] = {
+                "obs": obs_chunk,
+                "ips": ips,
+                "ports": ports,
+                "processes": processes,
+            }
+            
+        return hosts_dict
+
+# gt_hosts = self.raw_cyborg.environment_controller.state.hosts
+
+        # for hname, hstate in gt_hosts.items():
+            # Interfaces / IPs
+            # for iface in hstate.interfaces:
+            #     print(f"[{hname}] IP: {iface.get_state()}")
+
+            # # Processes and open ports
+            # for proc in hstate.processes:
+            #     if proc.connections:
+            #         pass
+            #         for conn in proc.connections:
+            #             print(f"[{hname}] PID {proc} listening on :{conn.get('local_address')}:{conn.get('local_port')} -> connected to :{conn.get('local_address')}:{conn.get('local_port')}")
+            #     else:
+            #         print(f"[{hname}] PID {proc}, User: {proc}")
+            
+            # Interfaces (eth only)
+        
+        # # IPs
+        # ips = [
+        #     iface.ip_address
+        #     for hstate in self.raw_cyborg.environment_controller.state.hosts.values()
+        #     for iface in hstate.interfaces
+        #     if iface.name.startswith("eth")
+        # ]
+
+        # # Ports
+        # ports = [
+        #     conn.get('local_port')
+        #     for hstate in self.raw_cyborg.environment_controller.state.hosts.values()
+        #     for proc in hstate.processes
+        #     for conn in proc.connections
+        # ]
+
+        # # Processes
+        # processes = [
+        #     proc.name
+        #     for hstate in self.raw_cyborg.environment_controller.state.hosts.values()
+        #     for proc in hstate.processes
+        # ]
+        
+        # if verbose:
+        #     print("IPs:", ips)
+        #     print("Ports:", ports)
+        #     print("Processes:", processes)
