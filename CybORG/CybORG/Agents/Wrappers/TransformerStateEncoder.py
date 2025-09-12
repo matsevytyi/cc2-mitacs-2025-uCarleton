@@ -52,11 +52,13 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         super().__init__(observation_space, features_dim=embedding_dim)
 
         self.embedding_dim = embedding_dim*2 # 1, 2, 3, 4 depending on amount of features
+        #self.embedding_dim = (embedding_dim, 2) # 1, 2, 3, 4 depending on amount of features
 
         # Each host = 4 bits, embed them into embedding_dim
         self.obs_embed = nn.Linear(4, embedding_dim)
         
         self.ip_byte_embed = nn.Embedding(256, embedding_dim // 4)
+        #self.ip_byte_embed = nn.Embedding(256, embedding_dim[0] // 4)
 
         # CLS token + positional encoding
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.embedding_dim) * 0.02)
@@ -105,9 +107,14 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             # print("obs before ", obs_chunks)
             obs_chunks = torch.tensor(obs_chunks, dtype=torch.float32)
             obs_chunks = self.obs_embed(obs_chunks) # [1, 1, D_obs]
+            obs_chunks = F.layer_norm(obs_chunks, obs_chunks.shape[-1:])
             # print("obs shape after ", obs_chunks.shape)
             # print("obs after ", obs_chunks)
             
+            if "obs_only" in version:
+                host_tokens_list.append(host_token)
+                continue
+                
             if "ip_local" in version:
             # ips
                 ip_chunks = obs.get(name).get('ips')[0]
@@ -116,6 +123,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             # print("ip shape before ", np.shape(ip_chunks))
             # print("ip before ", ip_chunks)
             ip_chunks = self.embed_ip(ip_chunks).unsqueeze(0).unsqueeze(0) # [1, 1, D_ip]
+            ip_chunks = F.layer_norm(ip_chunks, ip_chunks.shape[-1:])
                 
             # print("ip shape after ", ip_chunks.shape)
             # print("ip after ", ip_chunks)
@@ -123,10 +131,6 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             # ports
             
             # processes
-
-            
-            obs_chunks = F.layer_norm(obs_chunks, obs_chunks.shape[-1:])
-            ip_chunks = F.layer_norm(ip_chunks, ip_chunks.shape[-1:])
 
             # combine together (stack or concat)
             host_token = torch.cat([obs_chunks, ip_chunks], dim=-1) # [1, 1, D_ip+obs] or [1, 1, D_total]
@@ -151,6 +155,18 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
     # HELPER FUNCTIONS:
     # may be optimized
+    
+    def sinusoidal_positional_encoding(seq_len, dim, device="cpu"):
+        pos = torch.arange(seq_len, dtype=torch.float, device=device).unsqueeze(1)
+        i = torch.arange(dim, dtype=torch.float, device=device).unsqueeze(0)
+        angle_rates = 1 / (10000 ** (2 * (i // 2) / dim))
+        angle_rads = pos * angle_rates
+        pe = torch.zeros(seq_len, dim, device=device)
+        pe[:, 0::2] = torch.sin(angle_rads[:, 0::2])
+        pe[:, 1::2] = torch.cos(angle_rads[:, 1::2])
+        return pe.unsqueeze(0)  # [1, seq_len, dim]
+
+    
     def preprocess_table(self, raw_table):
         """Convert the full deep Blue/Red table into a list of flat token dicts per host."""
         obs_list = []
