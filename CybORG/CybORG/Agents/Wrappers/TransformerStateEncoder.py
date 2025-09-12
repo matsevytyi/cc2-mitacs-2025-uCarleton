@@ -85,7 +85,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         return ip_embed
 
         
-    def forward(self, obs: dict, host_order):
+    def forward(self, obs: dict, host_order, version="ip_local"):
         """
         obs: dict = flattened bit vector
         """
@@ -108,11 +108,15 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             # print("obs shape after ", obs_chunks.shape)
             # print("obs after ", obs_chunks)
             
+            if "ip_local" in version:
             # ips
-            ip_chunks = obs.get(name).get('ips')[0]
+                ip_chunks = obs.get(name).get('ips')[0]
+            else:
+                ip_chunks = obs.get(name).get('subnets')[0]
             # print("ip shape before ", np.shape(ip_chunks))
             # print("ip before ", ip_chunks)
             ip_chunks = self.embed_ip(ip_chunks).unsqueeze(0).unsqueeze(0) # [1, 1, D_ip]
+                
             # print("ip shape after ", ip_chunks.shape)
             # print("ip after ", ip_chunks)
             

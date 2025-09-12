@@ -20,7 +20,7 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 # Note: basically it is modified challengewrapper to use encoder
 class TransformerWrapper(Env,BaseWrapper):
     def __init__(self, agent_name: str, raw_cyborg, agent=None,
-            reward_threshold=None, max_steps = None, device='cpu'):
+            reward_threshold=None, max_steps = None, device='cpu', version="ip_local"):
         super().__init__(raw_cyborg, agent)
         self.agent_name = agent_name
         if agent_name.lower() == 'red':
@@ -30,6 +30,7 @@ class TransformerWrapper(Env,BaseWrapper):
         else:
             raise ValueError('Invalid Agent Name')
         
+        self.version = version
         self.raw_cyborg = raw_cyborg
         
         self.host_order = tuple(self.raw_cyborg.environment_controller.state.hosts.keys()) # to freeze the order
@@ -51,7 +52,7 @@ class TransformerWrapper(Env,BaseWrapper):
 
         self.transformer_encoder = TransformerStateEncoder(
             observation_space=None,
-            embedding_dim=embedding_dim,
+            embedding_dim=embedding_dim
         ).to(self.device)
         
 
@@ -82,7 +83,7 @@ class TransformerWrapper(Env,BaseWrapper):
             truncated = True
         
         with torch.no_grad():
-            encoded_obs = self.transformer_encoder(obs, self.host_order)
+            encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
 
         return encoded_obs.cpu().numpy(), reward, terminated, truncated, info
 
@@ -135,6 +136,12 @@ class TransformerWrapper(Env,BaseWrapper):
                 if iface.name.startswith("eth")
             ]
             
+            subnets = [
+                iface.subnet.__str__().split("/")[0]
+                for iface in hstate.interfaces
+                if iface.name.startswith("eth")
+            ]
+            
             ports = np.array([
                 conn.get("local_port")
                 for proc in hstate.processes
@@ -153,6 +160,7 @@ class TransformerWrapper(Env,BaseWrapper):
             hosts_dict[hname] = {
                 "obs": obs_chunk,
                 "ips": ips,
+                "subnets": subnets,
                 "ports": ports,
                 "processes": processes,
             }
