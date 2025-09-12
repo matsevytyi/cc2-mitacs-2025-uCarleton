@@ -59,7 +59,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         self.ip_byte_embed = nn.Embedding(256, embedding_dim // 4)
 
         # CLS token + positional encoding
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.embedding_dim))
+        self.cls_token = nn.Parameter(torch.randn(1, 1, self.embedding_dim) * 0.02)
         self.positional_embed = nn.Parameter(torch.zeros(1, 20, self.embedding_dim))  # supports up to 20 hosts
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -123,8 +123,11 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             # ports
             
             # processes
+
             
-            
+            obs_chunks = F.layer_norm(obs_chunks, obs_chunks.shape[-1:])
+            ip_chunks = F.layer_norm(ip_chunks, ip_chunks.shape[-1:])
+
             # combine together (stack or concat)
             host_token = torch.cat([obs_chunks, ip_chunks], dim=-1) # [1, 1, D_ip+obs] or [1, 1, D_total]
             host_tokens_list.append(host_token)
