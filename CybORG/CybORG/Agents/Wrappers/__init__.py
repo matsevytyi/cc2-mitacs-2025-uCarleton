@@ -8,3 +8,4 @@ from .EnumActionWrapper import EnumActionWrapper
 from .ChallengeWrapper import ChallengeWrapper
 from .ReduceActionSpaceWrapper import ReduceActionSpaceWrapper
 from .TransformerWrapper import TransformerWrapper
+from .PaddingWrapper import PaddingWrapper
