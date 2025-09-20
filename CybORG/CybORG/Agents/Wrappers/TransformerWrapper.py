@@ -95,7 +95,7 @@ class TransformerWrapper(Env,BaseWrapper):
         obs = self.extract_host_state(raw_cyborg=self.env.env.env.env.env, obs=obs)
 
         with torch.no_grad():
-            encoded_obs = self.transformer_encoder(obs, self.host_order)
+            encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
             
         return encoded_obs.cpu().numpy(), {}
 
@@ -149,13 +149,6 @@ class TransformerWrapper(Env,BaseWrapper):
             ])
             
             processes = np.array([proc.name for proc in hstate.processes])
-
-            # hosts_dict[hname] = {
-            #     "obs": obs_chunk,
-            #     "ips": ips,
-            #     "ports": ports,
-            #     "processes": processes,
-            # }
             
             hosts_dict[hname] = {
                 "obs": obs_chunk,
