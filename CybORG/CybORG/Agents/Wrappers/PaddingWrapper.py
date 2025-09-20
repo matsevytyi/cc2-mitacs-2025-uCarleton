@@ -38,6 +38,9 @@ class PaddingWrapper(Env,BaseWrapper):
         self.step_counter = None
 
     def step(self,action=None):
+
+        if action >= self.env.action_space.n:
+            action = self.env.action_space.sample()
         
         obs, reward, terminated, info = self.env.step(action=action)
         obs = self.pad_observation(obs, self.max_devices)
@@ -90,6 +93,7 @@ class PaddingWrapper(Env,BaseWrapper):
     def pad_observation(self, obs, max_devices):
 
         missing = max_devices*4 - len(obs)
+        
         if missing > 0:
             obs = np.pad(
                 obs,
