@@ -1,21 +1,13 @@
-from math import isnan
+import os, sys
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from stable_baselines3 import DQN
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from gym.spaces import Dict, Discrete, MultiBinary, Box
+
 import gym
-import ipaddress
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 from CybORG.CybORG.Shared.Enums import ProcessName
-
-import numpy as np
-
-from CybORG.Agents.Wrappers import BlueTableWrapper
-from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapper,RedTableWrapper,EnumActionWrapper
-
-import os, sys
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
@@ -47,22 +39,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             nhead=n_heads,
             batch_first=True
         )
+        
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
-        
-    def embed_ip(self, ip_str: str) -> torch.Tensor:
-        ip_bytes = [int(x) for x in ip_str.split('.')]  # 4 octets
-        embeds = [self.ip_byte_embed(torch.tensor(b)) for b in ip_bytes]  # 4 x (D_per_byte)
-        
-        # weights: first octet highest, last lowest
-        weights = torch.tensor([8.0, 4.0, 2.0, 1.0]).unsqueeze(-1)  # shape [4, 1]
-        
-        # apply weights to each embedding
-        weighted_embeds = [emb * w for emb, w in zip(embeds, weights)]
-        
-        # concatenate to single vector
-        ip_embed = torch.cat(weighted_embeds, dim=0)  # shape [4 * D_per_byte]
-        
-        return ip_embed
     
     def forward(self, obs: dict, host_order, version="ip_local"):
         """
@@ -70,6 +48,21 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         """
         
         batch_size = 1 # CC2 step default
+        
+        host_tokens = self.encode_features_perhost(obs, host_order, batch_size, version=version)
+        
+        # CLS token
+        cls_token = self.cls_token.expand(batch_size, -1, -1)  # [1, 1, D_total]
+        tokens = torch.cat([cls_token, host_tokens], dim=1)  # [1, 1 + num_hosts, D_total]
+
+        # Pass through transformer
+        encoded = self.transformer(tokens)  # (batch, seq_len, D) #TODO: apply second time
+
+        # Take CLS output
+        cls_output = encoded[:, 0, :]  # (batch, D)
+        return cls_output
+    
+    def encode_features_perhost(self, obs: dict, host_order, batch_size=1, version="ip_local"):
         host_tokens_list = []
         
         for name in host_order:
@@ -127,21 +120,25 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             proc_emb = F.layer_norm(proc_emb, proc_emb.shape[-1:])
 
             # combine together (stack or concat)
-            host_token = torch.cat([obs_chunks, ip_chunks, port_emb, proc_emb], dim=-1) # [1, 1, D_ip+obs] or [1, 1, D_total]
+            host_token = torch.cat([obs_chunks, ip_chunks, port_emb, proc_emb], dim=-1) # [1, 1, D_ip+obs+...] or [1, 1, D_total]
             host_tokens_list.append(host_token)
             
-        host_tokens = torch.cat(host_tokens_list, dim=1) # [1, num_hosts, D_total]
+        return torch.cat(host_tokens_list, dim=1) # [1, num_hosts, D_total]
 
-        # CLS token
-        cls_token = self.cls_token.expand(batch_size, -1, -1)  # [1, 1, D_total]
-        tokens = torch.cat([cls_token, host_tokens], dim=1)  # [1, 1 + num_hosts, D_total]
-
-        # Pass through transformer
-        encoded = self.transformer(tokens)  # (batch, seq_len, D) #TODO: apply second time
-
-        # Take CLS output
-        cls_output = encoded[:, 0, :]  # (batch, D)
-        return cls_output
+    def embed_ip(self, ip_str: str) -> torch.Tensor:
+        ip_bytes = [int(x) for x in ip_str.split('.')]  # 4 octets
+        embeds = [self.ip_byte_embed(torch.tensor(b)) for b in ip_bytes]  # 4 x (D_per_byte)
+        
+        # weights: first octet highest, last lowest
+        weights = torch.tensor([8.0, 4.0, 2.0, 1.0]).unsqueeze(-1)  # shape [4, 1]
+        
+        # apply weights to each embedding
+        weighted_embeds = [emb * w for emb, w in zip(embeds, weights)]
+        
+        # concatenate to single vector
+        ip_embed = torch.cat(weighted_embeds, dim=0)  # shape [4 * D_per_byte]
+        
+        return ip_embed
     
     def sinusoidal_positional_encoding(seq_len, dim, device="cpu"):
         pos = torch.arange(seq_len, dtype=torch.float, device=device).unsqueeze(1)

@@ -7,9 +7,6 @@ import torch.nn.functional as F
 import numpy as np
 
 from stable_baselines3 import DQN
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from gym.spaces import Dict, Discrete, MultiBinary, Box
-import gym
 
 from CybORG.Agents.Wrappers.TransformerStateEncoder import TransformerStateEncoder
 
@@ -17,7 +14,7 @@ import os, sys
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-# Note: basically it is modified challengewrapper to use encoder
+# Note: modified challengewrapper to use encoder
 class TransformerWrapper(Env,BaseWrapper):
     def __init__(self, agent_name: str, raw_cyborg, agent=None,
             reward_threshold=None, max_steps = None, device='cpu', version="ip_local"):
@@ -159,49 +156,3 @@ class TransformerWrapper(Env,BaseWrapper):
             }
             
         return hosts_dict
-
-# gt_hosts = self.raw_cyborg.environment_controller.state.hosts
-
-        # for hname, hstate in gt_hosts.items():
-            # Interfaces / IPs
-            # for iface in hstate.interfaces:
-            #     print(f"[{hname}] IP: {iface.get_state()}")
-
-            # # Processes and open ports
-            # for proc in hstate.processes:
-            #     if proc.connections:
-            #         pass
-            #         for conn in proc.connections:
-            #             print(f"[{hname}] PID {proc} listening on :{conn.get('local_address')}:{conn.get('local_port')} -> connected to :{conn.get('local_address')}:{conn.get('local_port')}")
-            #     else:
-            #         print(f"[{hname}] PID {proc}, User: {proc}")
-            
-            # Interfaces (eth only)
-        
-        # # IPs
-        # ips = [
-        #     iface.ip_address
-        #     for hstate in self.raw_cyborg.environment_controller.state.hosts.values()
-        #     for iface in hstate.interfaces
-        #     if iface.name.startswith("eth")
-        # ]
-
-        # # Ports
-        # ports = [
-        #     conn.get('local_port')
-        #     for hstate in self.raw_cyborg.environment_controller.state.hosts.values()
-        #     for proc in hstate.processes
-        #     for conn in proc.connections
-        # ]
-
-        # # Processes
-        # processes = [
-        #     proc.name
-        #     for hstate in self.raw_cyborg.environment_controller.state.hosts.values()
-        #     for proc in hstate.processes
-        # ]
-        
-        # if verbose:
-        #     print("IPs:", ips)
-        #     print("Ports:", ports)
-        #     print("Processes:", processes)
