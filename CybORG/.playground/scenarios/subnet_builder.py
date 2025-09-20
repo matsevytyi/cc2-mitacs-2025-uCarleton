@@ -2907,6 +2907,9 @@ def main():
             break
         print("Please try again with a valid file path.\n")
     
+    # TODO:
+    # Normalize more
+    
     # Main interaction loop
     while True:
         print("\nENHANCED MAIN MENU")

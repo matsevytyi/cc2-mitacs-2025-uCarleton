@@ -1,0 +1,8 @@
+linux_user_host3:
+  path: linux_user_host_image3
+linux_user_host4:
+  path: linux_user_host_image4
+windows_user_host3:
+  path: windows_user_host_image3
+windows_user_host4:
+  path: windows_user_host_image4
