@@ -45,13 +45,7 @@ class TransformerWrapper(Env,BaseWrapper):
         self.device = device
 
         embedding_dim = 64 # transformer embedding dimension
-        observation_shape_size = embedding_dim*2 # or *1 depending on the architecture
-
-        self.transformer_encoder = TransformerStateEncoder(
-            observation_space=None,
-            embedding_dim=embedding_dim
-        ).to(self.device)
-        
+        observation_shape_size = embedding_dim*4 # or *1 depending on the architecture
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -59,6 +53,13 @@ class TransformerWrapper(Env,BaseWrapper):
             shape=(observation_shape_size, ),  # embedding_dim from transformer encoder
             dtype=np.float32
         )
+
+        self.transformer_encoder = TransformerStateEncoder(
+            observation_space=self.observation_space,
+            embedding_dim=embedding_dim,
+            initial_host_count=len(self.host_order)
+        ).to(self.device)
+        
 
         self.reward_threshold = reward_threshold
         self.max_steps = max_steps

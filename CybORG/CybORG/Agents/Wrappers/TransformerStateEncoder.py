@@ -7,13 +7,15 @@ import torch.nn.functional as F
 import gym
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from CybORG.CybORG.Shared.Enums import ProcessName
+import numpy as np
+
+from CybORG.Shared.Enums import ProcessName
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 class TransformerStateEncoder(BaseFeaturesExtractor):
 
-    def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2):
+    def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2, initial_host_count=0):
         super().__init__(observation_space, features_dim=embedding_dim)
 
         self.embedding_dim = embedding_dim*4 # 1, 2, 3, 4 depending on amount of features
@@ -34,13 +36,22 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.embedding_dim) * 0.02)
 
+        self.H = initial_host_count
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.embedding_dim,
             nhead=n_heads,
             batch_first=True
         )
         
+        # deployment
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+
+        # training
+        self.token_head_from_cls = nn.Linear(self.embedding_dim, self.H * self.embedding_dim)
+        self.recon_criterion = nn.MSELoss()
+        self.primary_criterion = nn.CrossEntropyLoss()
+
     
     def forward(self, obs: dict, host_order, version="ip_local"):
         """
@@ -55,11 +66,23 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         cls_token = self.cls_token.expand(batch_size, -1, -1)  # [1, 1, D_total]
         tokens = torch.cat([cls_token, host_tokens], dim=1)  # [1, 1 + num_hosts, D_total]
 
+        self.H = tokens.size(1) - 1
+        self.B = tokens.size(2)
+
+
         # Pass through transformer
         encoded = self.transformer(tokens)  # (batch, seq_len, D) #TODO: apply second time
 
         # Take CLS output
         cls_output = encoded[:, 0, :]  # (batch, D)
+
+        reconstruction = self.token_head_from_cls(cls_output) #(batch, seq_length)
+        reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
+
+        recon_loss = self.recon_criterion(reconstruction, host_tokens)
+
+        print("loss:", recon_loss)
+
         return cls_output
     
     def encode_features_perhost(self, obs: dict, host_order, batch_size=1, version="ip_local"):
