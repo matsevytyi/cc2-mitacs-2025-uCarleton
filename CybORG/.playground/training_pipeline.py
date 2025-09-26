@@ -84,8 +84,26 @@ model1 = algorithm(
     exploration_final_eps=0.025, 
 )
 
+# model1 = PPO(
+#     policy='MlpPolicy',
+#     env=gym_env,
+#     verbose=2,
+#     tensorboard_log="./logs/",
+#     device='cpu',
+#     learning_rate=3e-4,
+#     n_steps=2048,
+#     batch_size=64,
+#     n_epochs=10,
+#     gamma=0.99,
+#     gae_lambda=0.95,
+#     clip_range=0.2,
+#     ent_coef=0.0,
+#     vf_coef=0.5,
+#     max_grad_norm=0.5
+# )
+
 #run_id = "padding to 0 version on {subnet_id}"
-run_id = "CLS[1, 2*64] + simple obs + FULL subnet + norm + random CLS on 5000 epochs_50 episodes + 2 transformer heads + 4 layers + bigger decay = 0.2 + smaller exploration_final_eps=0.025"
+run_id = "CLS[1, 2*64] + simple obs + FULL subnet + norm + training_pipeline + random CLS on 5000 epochs_50 episodes + 2 transformer heads + 4 layers + bigger decay = 0.2 + smaller exploration_final_eps=0.025"
 #run_id = "padding to -1 version"
 
 model1.learn(

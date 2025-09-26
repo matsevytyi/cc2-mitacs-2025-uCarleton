@@ -45,7 +45,7 @@ class TransformerWrapper(Env,BaseWrapper):
         self.device = device
 
         embedding_dim = 64 # transformer embedding dimension
-        observation_shape_size = embedding_dim*4 # or *1 depending on the architecture
+        observation_shape_size = embedding_dim*2 # or *1 depending on the architecture
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -80,10 +80,11 @@ class TransformerWrapper(Env,BaseWrapper):
         if self.max_steps is not None and self.step_counter >= self.max_steps:
             truncated = True
         
-        with torch.no_grad():
-            encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
+        # with torch.no_grad():
+        #     encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
+        encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
 
-        return encoded_obs.cpu().numpy(), reward, terminated, truncated, info
+        return encoded_obs.detach().cpu().numpy(), reward, terminated, truncated, info
 
     def reset(self, **kwargs):
         self.step_counter = 0
@@ -92,10 +93,11 @@ class TransformerWrapper(Env,BaseWrapper):
         # enrich obs with other contextual information
         obs = self.extract_host_state(raw_cyborg=self.env.env.env.env.env, obs=obs)
 
-        with torch.no_grad():
-            encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
+        # with torch.no_grad():
+        #     encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
+        encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
             
-        return encoded_obs.cpu().numpy(), {}
+        return encoded_obs.detach().cpu().numpy(), {}
 
     def get_attr(self,attribute:str):
         return self.env.get_attr(attribute)

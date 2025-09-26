@@ -3,6 +3,7 @@ import os, sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 
 import gym
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -18,7 +19,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2, initial_host_count=0):
         super().__init__(observation_space, features_dim=embedding_dim)
 
-        self.embedding_dim = embedding_dim*4 # 1, 2, 3, 4 depending on amount of features
+        self.embedding_dim = embedding_dim*2 # 1, 2, 3, 4 depending on amount of features
         #self.embedding_dim = (embedding_dim, 2) # 1, 2, 3, 4 depending on amount of features
 
         self.obs_embed = nn.Linear(4, embedding_dim)
@@ -36,6 +37,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.embedding_dim) * 0.02)
 
+        self.error_threshold = 0.8
+
         self.H = initial_host_count
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -49,14 +52,32 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         # training
         self.token_head_from_cls = nn.Linear(self.embedding_dim, self.H * self.embedding_dim)
+
         self.recon_criterion = nn.MSELoss()
-        self.primary_criterion = nn.CrossEntropyLoss()
+
+        self.optimizer = optim.AdamW(
+            self.transformer .parameters(), 
+            lr=1e-4, 
+            weight_decay=0.01,
+            betas=(0.9, 0.999)
+        )
+        
+        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer, 
+            T_0=1000, 
+            eta_min=1e-6
+        )
+        
 
     
     def forward(self, obs: dict, host_order, version="ip_local"):
         """
         obs: dict = flattened bit vector
         """
+
+        self.transformer.train()
+
+        self.optimizer.zero_grad()
         
         batch_size = 1 # CC2 step default
         
@@ -81,7 +102,23 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         recon_loss = self.recon_criterion(reconstruction, host_tokens)
 
-        print("loss:", recon_loss)
+        recon_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.transformer.parameters(), 1.0)
+        self.optimizer.step() 
+        self.scheduler.step()
+
+        # while recon_loss > self.error_threshold:
+        #     recon_loss.backward()
+        #     torch.nn.utils.clip_grad_norm_(self.transformer.parameters(), 1.0)
+        #     self.optimizer.step() 
+        #     self.scheduler.step()
+        #     cls_output = self.transformer(tokens)[:, 0, :]
+
+        #     reconstruction = self.token_head_from_cls(cls_output) #(batch, seq_length)
+        #     reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
+        #     recon_loss = self.recon_criterion(reconstruction, host_tokens)
+        
+        # self.error_threshold = 0.9 * self.error_threshold + 0.1 * recon_loss.item()
 
         return cls_output
     
@@ -113,37 +150,38 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             ip_chunks = F.layer_norm(ip_chunks, ip_chunks.shape[-1:])
             
             # ports
-            ports_list = obs.get(name).get('ports', [])
+            # ports_list = obs.get(name).get('ports', [])
             
-            if len(ports_list) > 0:
+            # if len(ports_list) > 0:
                 
-                port_indices = torch.tensor([self.port_to_index(int(p)) for p in ports_list],
-                                            dtype=torch.long, device=self.cls_token.device)
-                port_vecs = self.port_embed(port_indices)              # [n_ports, d_port]
-                port_emb = port_vecs.mean(dim=0, keepdim=True).unsqueeze(0)  # [1, 1, d_port]
-            else:
-                port_emb = torch.zeros(1, 1, self.embedding_dim // 4, device=self.cls_token.device)
+            #     port_indices = torch.tensor([self.port_to_index(int(p)) for p in ports_list],
+            #                                 dtype=torch.long, device=self.cls_token.device)
+            #     port_vecs = self.port_embed(port_indices)              # [n_ports, d_port]
+            #     port_emb = port_vecs.mean(dim=0, keepdim=True).unsqueeze(0)  # [1, 1, d_port]
+            # else:
+            #     port_emb = torch.zeros(1, 1, self.embedding_dim // 4, device=self.cls_token.device)
                 
-            port_emb = F.layer_norm(port_emb, port_emb.shape[-1:])
+            # port_emb = F.layer_norm(port_emb, port_emb.shape[-1:])
             
-            # processes
-            proc_list = obs.get(name).get('processes', [])
+            # # processes
+            # proc_list = obs.get(name).get('processes', [])
             
-            if proc_list is None:
-                proc_list = []
+            # if proc_list is None:
+            #     proc_list = []
 
-            if len(proc_list) > 0:
-                proc_indices = torch.tensor([self.process_to_index(str(p)) for p in proc_list],
-                                            dtype=torch.long, device=self.cls_token.device)
-                proc_vecs = self.proc_embed(proc_indices)             # [n_proc, d_proc]
-                proc_emb = proc_vecs.mean(dim=0, keepdim=True).unsqueeze(0) # [1,1,d_proc]
-            else:
-                proc_emb = torch.zeros(1, 1, self.embedding_dim//4, device=self.cls_token.device)
+            # if len(proc_list) > 0:
+            #     proc_indices = torch.tensor([self.process_to_index(str(p)) for p in proc_list],
+            #                                 dtype=torch.long, device=self.cls_token.device)
+            #     proc_vecs = self.proc_embed(proc_indices)             # [n_proc, d_proc]
+            #     proc_emb = proc_vecs.mean(dim=0, keepdim=True).unsqueeze(0) # [1,1,d_proc]
+            # else:
+            #     proc_emb = torch.zeros(1, 1, self.embedding_dim//4, device=self.cls_token.device)
                 
-            proc_emb = F.layer_norm(proc_emb, proc_emb.shape[-1:])
+            # proc_emb = F.layer_norm(proc_emb, proc_emb.shape[-1:])
 
             # combine together (stack or concat)
-            host_token = torch.cat([obs_chunks, ip_chunks, port_emb, proc_emb], dim=-1) # [1, 1, D_ip+obs+...] or [1, 1, D_total]
+            #host_token = torch.cat([obs_chunks, ip_chunks, port_emb, proc_emb], dim=-1)
+            host_token = torch.cat([obs_chunks, ip_chunks], dim=-1) # [1, 1, D_ip+obs+...] or [1, 1, D_total]
             host_tokens_list.append(host_token)
             
         return torch.cat(host_tokens_list, dim=1) # [1, num_hosts, D_total]
