@@ -14,18 +14,17 @@ from CybORG.Shared.Enums import ProcessName
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
+
 class TransformerStateEncoder(BaseFeaturesExtractor):
 
     def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2, initial_host_count=0):
         super().__init__(observation_space, features_dim=embedding_dim)
 
         self.embedding_dim = embedding_dim*2 # 1, 2, 3, 4 depending on amount of features
-        #self.embedding_dim = (embedding_dim, 2) # 1, 2, 3, 4 depending on amount of features
 
         self.obs_embed = nn.Linear(4, embedding_dim)
         
         self.ip_byte_embed = nn.Embedding(256, embedding_dim // 4)
-
 
         self.port_hash_size = 4096  # tune: 4096, 8192, etc.
         self.port_embed = nn.Embedding(self.port_hash_size, embedding_dim)
@@ -55,33 +54,55 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         self.recon_criterion = nn.MSELoss()
 
-        self.optimizer = optim.AdamW(
-            self.transformer .parameters(), 
+        # Separate optimizers for weighted backward propagation
+        self.transformer_optimizer = optim.AdamW(
+            self.transformer.parameters(), 
             lr=1e-4, 
             weight_decay=0.01,
             betas=(0.9, 0.999)
         )
         
-        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer, 
+        self.recon_optimizer = optim.AdamW(
+            self.token_head_from_cls.parameters(),
+            lr=5e-5,  # 0.5x learning rate for reconstruction head
+            weight_decay=0.01,
+            betas=(0.9, 0.999)
+        )
+        
+        self.transformer_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.transformer_optimizer, 
             T_0=1000, 
             eta_min=1e-6
         )
         
+        self.recon_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.recon_optimizer,
+            T_0=1000,
+            eta_min=5e-7
+        )
 
-    
-    def forward(self, obs: dict, host_order, version="ip_local"):
+    def forward(self, obs: dict, host_order, version="ip_local", mode="train"):
         """
         obs: dict = flattened bit vector
         """
 
-        self.transformer.train()
-
-        self.optimizer.zero_grad()
+        if mode == "train": 
+            self.transformer.train()
+            self.transformer_optimizer.zero_grad()
+            self.recon_optimizer.zero_grad()
         
         batch_size = 1 # CC2 step default
         
         host_tokens = self.encode_features_perhost(obs, host_order, batch_size, version=version)
+        
+        # Apply sinusoidal positional encoding after feature encoding (as per diagram)
+        seq_len = host_tokens.size(1)
+        pos_encoding = self.sinusoidal_positional_encoding(
+            seq_len, 
+            self.embedding_dim, 
+            device=host_tokens.device
+        )
+        host_tokens = host_tokens + pos_encoding  # Add positional encoding
         
         # CLS token
         cls_token = self.cls_token.expand(batch_size, -1, -1)  # [1, 1, D_total]
@@ -90,35 +111,33 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         self.H = tokens.size(1) - 1
         self.B = tokens.size(2)
 
-
         # Pass through transformer
-        encoded = self.transformer(tokens)  # (batch, seq_len, D) #TODO: apply second time
+        encoded = self.transformer(tokens)  # (batch, seq_len, D)
 
         # Take CLS output
         cls_output = encoded[:, 0, :]  # (batch, D)
-
-        reconstruction = self.token_head_from_cls(cls_output) #(batch, seq_length)
-        reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
-
-        recon_loss = self.recon_criterion(reconstruction, host_tokens)
-
-        recon_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.transformer.parameters(), 1.0)
-        self.optimizer.step() 
-        self.scheduler.step()
-
-        # while recon_loss > self.error_threshold:
-        #     recon_loss.backward()
-        #     torch.nn.utils.clip_grad_norm_(self.transformer.parameters(), 1.0)
-        #     self.optimizer.step() 
-        #     self.scheduler.step()
-        #     cls_output = self.transformer(tokens)[:, 0, :]
-
-        #     reconstruction = self.token_head_from_cls(cls_output) #(batch, seq_length)
-        #     reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
-        #     recon_loss = self.recon_criterion(reconstruction, host_tokens)
         
-        # self.error_threshold = 0.9 * self.error_threshold + 0.1 * recon_loss.item()
+        if mode == "train": 
+            reconstruction = self.token_head_from_cls(cls_output) #(batch, seq_length)
+            reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
+
+            recon_loss = self.recon_criterion(reconstruction, host_tokens)
+
+            # Weighted backward propagation
+            # Prioritize transformer encoder updates (1.0x) over reconstruction head (0.5x)
+            recon_loss.backward()
+            
+            # Apply gradient clipping and optimizer steps with weighted updates
+            torch.nn.utils.clip_grad_norm_(self.transformer.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(self.token_head_from_cls.parameters(), 0.5)
+            
+            self.transformer_optimizer.step() 
+            self.recon_optimizer.step()
+            
+            self.transformer_scheduler.step()
+            self.recon_scheduler.step()
+            
+            self.error_threshold = 0.9 * self.error_threshold + 0.1 * recon_loss.item()
 
         return cls_output
     
@@ -181,6 +200,9 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
             # combine together (stack or concat)
             #host_token = torch.cat([obs_chunks, ip_chunks, port_emb, proc_emb], dim=-1)
+      
+            
+            # combine together (stack or concat)
             host_token = torch.cat([obs_chunks, ip_chunks], dim=-1) # [1, 1, D_ip+obs+...] or [1, 1, D_total]
             host_tokens_list.append(host_token)
             
@@ -201,7 +223,9 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         
         return ip_embed
     
+    @staticmethod
     def sinusoidal_positional_encoding(seq_len, dim, device="cpu"):
+        """Generate sinusoidal positional encoding"""
         pos = torch.arange(seq_len, dtype=torch.float, device=device).unsqueeze(1)
         i = torch.arange(dim, dtype=torch.float, device=device).unsqueeze(0)
         angle_rates = 1 / (10000 ** (2 * (i // 2) / dim))
