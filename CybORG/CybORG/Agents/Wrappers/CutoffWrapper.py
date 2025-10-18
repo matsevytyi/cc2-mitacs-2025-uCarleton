@@ -3,10 +3,10 @@ import numpy as np
 
 from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapper,RedTableWrapper,EnumActionWrapper
 
-# pads 0 for non-existent devices in the observation
-class PaddingWrapper(Env,BaseWrapper):
+# cuts off devices that are out of the observation
+class CutoffWrapper(Env,BaseWrapper):
     
-    def __init__(self, agent_name: str, env, max_devices = 1000, agent=None,
+    def __init__(self, agent_name: str, env, max_devices = 6, agent=None,
             reward_threshold=None, max_steps = None):
         super().__init__(env, agent)
         self.agent_name = agent_name
@@ -43,7 +43,7 @@ class PaddingWrapper(Env,BaseWrapper):
             action = self.env.action_space.sample()
         
         obs, reward, terminated, info = self.env.step(action=action)
-        obs = self.pad_observation(obs, self.max_devices)
+        obs = self.cutoff_observation(obs, self.max_devices)
         
         self.step_counter += 1
         if self.max_steps is not None and self.step_counter >= self.max_steps:
@@ -60,7 +60,7 @@ class PaddingWrapper(Env,BaseWrapper):
         self.step_counter = 0
         
         obs = self.env.reset(**kwargs)
-        obs = self.pad_observation(obs, self.max_devices)
+        obs = self.cutoff_observation(obs, self.max_devices)
         
         return obs, {}
 
@@ -90,13 +90,11 @@ class PaddingWrapper(Env,BaseWrapper):
     
     import numpy as np
 
-    def pad_observation(self, obs, max_devices):
+    def cutoff_observation(self, obs, max_devices):
+
+        max_len = max_devices * 4
         
-        missing = max_devices * 4 - len(obs)
-        
-        if missing > 0:
-            left = missing // 2
-            right = missing - left
-            obs = np.pad(obs, (left, right), constant_values=0)
+        if len(obs) > max_len:
+            obs = obs[:max_len]
             
         return obs
