@@ -54,7 +54,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         self.recon_criterion = nn.MSELoss()
 
-        # Separate optimizers for weighted backward propagation
+        # separate optimizers for weighted backward propagation
         self.transformer_optimizer = optim.AdamW(
             self.transformer.parameters(), 
             lr=1e-4, 
@@ -80,6 +80,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             T_0=1000,
             eta_min=5e-7
         )
+        
+    # =================== MAIN METHODS ===================
 
     def forward(self, obs: dict, host_order, version="ip_local", mode="train"):
         """
@@ -141,6 +143,28 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
 
         return cls_output
     
+    def save_weights(self, path):
+        """Save only the encoder weights"""
+        torch.save({
+            'transformer': self.transformer.state_dict(),
+            'obs_embed': self.obs_embed.state_dict(),
+            'ip_byte_embed': self.ip_byte_embed.state_dict(),
+            'cls_token': self.cls_token,
+            'token_head_from_cls': self.token_head_from_cls.state_dict(),
+            # any other components you want to save
+        }, path)
+    
+    def load_weights(self, path):
+        """Load encoder weights"""
+        checkpoint = torch.load(path)
+        self.transformer.load_state_dict(checkpoint['transformer'])
+        self.obs_embed.load_state_dict(checkpoint['obs_embed'])
+        self.ip_byte_embed.load_state_dict(checkpoint['ip_byte_embed'])
+        self.cls_token = checkpoint['cls_token']
+        self.token_head_from_cls.load_state_dict(checkpoint['token_head_from_cls'])
+    
+    # =================== HELPER METHODS ===================
+    
     def encode_features_perhost(self, obs: dict, host_order, batch_size=1, version="ip_local"):
         host_tokens_list = []
         
@@ -169,40 +193,37 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             ip_chunks = F.layer_norm(ip_chunks, ip_chunks.shape[-1:])
             
             # ports
-            # ports_list = obs.get(name).get('ports', [])
-            
-            # if len(ports_list) > 0:
+            if "full_design" in version:
+                ports_list = obs.get(name).get('ports', [])
                 
-            #     port_indices = torch.tensor([self.port_to_index(int(p)) for p in ports_list],
-            #                                 dtype=torch.long, device=self.cls_token.device)
-            #     port_vecs = self.port_embed(port_indices)              # [n_ports, d_port]
-            #     port_emb = port_vecs.mean(dim=0, keepdim=True).unsqueeze(0)  # [1, 1, d_port]
-            # else:
-            #     port_emb = torch.zeros(1, 1, self.embedding_dim // 4, device=self.cls_token.device)
+                if len(ports_list) > 0:
+                    
+                    port_indices = torch.tensor([self.port_to_index(int(p)) for p in ports_list],
+                                                dtype=torch.long, device=self.cls_token.device)
+                    port_vecs = self.port_embed(port_indices)              # [n_ports, d_port]
+                    port_emb = port_vecs.mean(dim=0, keepdim=True).unsqueeze(0)  # [1, 1, d_port]
+                else:
+                    port_emb = torch.zeros(1, 1, self.embedding_dim // 4, device=self.cls_token.device)
+                    
+                port_emb = F.layer_norm(port_emb, port_emb.shape[-1:])
                 
-            # port_emb = F.layer_norm(port_emb, port_emb.shape[-1:])
-            
-            # # processes
-            # proc_list = obs.get(name).get('processes', [])
-            
-            # if proc_list is None:
-            #     proc_list = []
+                # processes
+                proc_list = obs.get(name).get('processes', [])
+                
+                if proc_list is None:
+                    proc_list = []
 
-            # if len(proc_list) > 0:
-            #     proc_indices = torch.tensor([self.process_to_index(str(p)) for p in proc_list],
-            #                                 dtype=torch.long, device=self.cls_token.device)
-            #     proc_vecs = self.proc_embed(proc_indices)             # [n_proc, d_proc]
-            #     proc_emb = proc_vecs.mean(dim=0, keepdim=True).unsqueeze(0) # [1,1,d_proc]
-            # else:
-            #     proc_emb = torch.zeros(1, 1, self.embedding_dim//4, device=self.cls_token.device)
-                
-            # proc_emb = F.layer_norm(proc_emb, proc_emb.shape[-1:])
-
-            # combine together (stack or concat)
-            #host_token = torch.cat([obs_chunks, ip_chunks, port_emb, proc_emb], dim=-1)
+                if len(proc_list) > 0:
+                    proc_indices = torch.tensor([self.process_to_index(str(p)) for p in proc_list],
+                                                dtype=torch.long, device=self.cls_token.device)
+                    proc_vecs = self.proc_embed(proc_indices)             # [n_proc, d_proc]
+                    proc_emb = proc_vecs.mean(dim=0, keepdim=True).unsqueeze(0) # [1,1,d_proc]
+                else:
+                    proc_emb = torch.zeros(1, 1, self.embedding_dim//4, device=self.cls_token.device)
+                    
+                proc_emb = F.layer_norm(proc_emb, proc_emb.shape[-1:])
       
-            
-            # combine together (stack or concat)
+            # combine together
             host_token = torch.cat([obs_chunks, ip_chunks], dim=-1) # [1, 1, D_ip+obs+...] or [1, 1, D_total]
             host_tokens_list.append(host_token)
             
