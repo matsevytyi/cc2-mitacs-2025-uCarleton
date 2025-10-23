@@ -17,7 +17,7 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 # Note: modified challengewrapper to use encoder
 class TransformerWrapper(Env,BaseWrapper):
     def __init__(self, agent_name: str, raw_cyborg, agent=None,
-            reward_threshold=None, max_steps = None, device='cpu', version="ip_local"):
+            reward_threshold=None, max_steps = None, max_actions=None, action_space_mode="pad", device='cpu', version="ip_local"):
         super().__init__(raw_cyborg, agent)
         self.agent_name = agent_name
         if agent_name.lower() == 'red':
@@ -64,8 +64,28 @@ class TransformerWrapper(Env,BaseWrapper):
         self.reward_threshold = reward_threshold
         self.max_steps = max_steps
         self.step_counter = None
+        
+        # fixed action space padding/cutoff
+        self.max_actions = max_actions
+        self.action_space_mode = action_space_mode  # "pad" or "cutoff"
+        if self.max_actions is not None:
+            self.action_space = spaces.Discrete(int(self.max_actions))
 
     def step(self,action=None, debug=False, verbose=False):
+        
+        # Map out-of-range actions to a valid one based on the selected mode
+        if action is not None:
+            try:
+                n_valid = int(self.env.action_space.n)
+            except Exception:
+                n_valid = None
+            if self.max_actions is not None and n_valid is not None and n_valid > 0:
+                if action >= n_valid:
+                    if self.action_space_mode == "cutoff":
+                        action = n_valid - 1
+                    else:
+                        action = self.env.action_space.sample()
+                        
         obs, reward, terminated, info = self.env.step(action=action)
         
         # self.env.env.env.env.env is same as active self.raw_cyborg
