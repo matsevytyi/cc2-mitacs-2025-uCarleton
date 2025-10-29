@@ -12,11 +12,12 @@ from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.logger import configure
 
 # ========== CONFIGURATION ==========
-ALGORITHM = DQN
+transformer = True
+ALGORITHM = PPO
 USE_PRETRAINED = False
 MODEL_PATH = "DQN_transformer_model.zip"
 TOTAL_TIMESTEPS = 500_000
-RUN_ID = f"{ALGORITHM.__name__}_dynamic_topology"
+RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_dynamic_topology"
 TENSORBOARD_LOG = "./logs/"
 
 device = 'cpu'
@@ -108,6 +109,11 @@ model.learn(
 )
 
 # 5) Save model
-out_name = f"{ALGORITHM.__name__}_dynamic_{RUN_ID}"
+out_name = f"{RUN_ID}"
 model.save(out_name)
 print(f"Saved model to {out_name}.zip")
+
+if transformer:
+    encoder = gym_env.transformer_encoder  # or gym_env.transformer_encoder or similar
+    encoder.save_weights(out_name + ".encoder.pth")
+    print(f"Encoder weights saved to: {out_name}.encoder.pth")

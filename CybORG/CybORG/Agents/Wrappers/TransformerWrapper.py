@@ -44,6 +44,7 @@ class TransformerWrapper(Env,BaseWrapper):
         self.table_env = table_wrapper(raw_cyborg, output_mode='table')
 
         self.action_history = []
+        self.recon_loss_history = []
 
         if env_creator and yaml_path:
             self.env_creator = env_creator
@@ -88,6 +89,7 @@ class TransformerWrapper(Env,BaseWrapper):
     def step(self,action=None, debug=False, verbose=False):
 
         self.action_history.append(self.decode_action(action)[1])
+        self.recon_loss_history.append(self.transformer_encoder.recon_loss.item())
         
         # Map out-of-range actions to a valid one based on the selected mode
         if action is not None:
@@ -144,20 +146,21 @@ class TransformerWrapper(Env,BaseWrapper):
             os.makedirs(csv_dir, exist_ok=True)
 
             # File unique per agent_name (or add timestamp if you want)
-            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Transformer_RedMeander_DQN.csv")
+            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Transformer_RedMeander_PPO.csv")
 
             # Append mode is safe (creates file if not exists)
             with open(csv_path, mode='a', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 # Optional: write header if file is new
                 if os.stat(csv_path).st_size == 0:
-                    writer.writerow(['timestamp', 'episode', 'step', 'action_type'])
+                    writer.writerow(['timestamp', 'episode', 'step', 'action_type', 'host_count', 'recon_loss'])
                 timestamp = datetime.now().isoformat()
                 for step, action in enumerate(self.action_history):
-                    writer.writerow([timestamp, getattr(self, 'episode', None), step, action])
+                    writer.writerow([timestamp, getattr(self, 'episode', None), step, action, len(self.host_order), self.recon_loss_history[step]])
 
         # Clear history after save
         self.action_history = []
+        self.recon_loss_history = []
 
         # reload env        
             
@@ -179,7 +182,7 @@ class TransformerWrapper(Env,BaseWrapper):
         
         # try:
 
-        print("Reload in place")
+        #print("Reload in place")
         # churn devices
         churn_hosts(self.yaml_path)
         
@@ -202,6 +205,15 @@ class TransformerWrapper(Env,BaseWrapper):
         
         # Update host order (may have changed)
         self.host_order = tuple(self.raw_cyborg.environment_controller.state.hosts.keys())
+
+        # dump dynamically old weights
+        old_weights = {
+            'transformer': self.transformer_encoder.transformer.state_dict(),
+            'obs_embed': self.transformer_encoder.obs_embed.state_dict(),
+            'ip_byte_embed': self.transformer_encoder.ip_byte_embed.state_dict(),
+            'cls_token': self.transformer_encoder.cls_token.data,
+            'token_head_from_cls': self.transformer_encoder.token_head_from_cls.state_dict(),
+        }
         
         # Reinitialize encoder with new host count
         self.transformer_encoder = TransformerStateEncoder(
@@ -209,6 +221,8 @@ class TransformerWrapper(Env,BaseWrapper):
             embedding_dim=64,
             initial_host_count=len(self.host_order)
         ).to(self.device)
+
+        self.transformer_encoder.load_weights_from_dict(old_weights)
         
         return True
         # except Exception as e:
