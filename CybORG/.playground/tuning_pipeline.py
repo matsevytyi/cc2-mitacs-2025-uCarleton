@@ -7,13 +7,16 @@ import random
 
 from CybORG import CybORG
 from CybORG.Agents import RedMeanderAgent
-from CybORG.Agents.Wrappers import TransformerWrapper
+from CybORG.Agents.Wrappers import TransformerWrapper, PaddingWrapper
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.logger import configure
 
 # ========== CONFIGURATION ==========
+
 transformer = True
-ALGORITHM = PPO
+
+ALGORITHM = DQN
+algorithm_name = ALGORITHM.__name__
 USE_PRETRAINED = False
 MODEL_PATH = "DQN_transformer_model.zip"
 TOTAL_TIMESTEPS = 500_000
@@ -23,7 +26,8 @@ TENSORBOARD_LOG = "./logs/"
 device = 'cpu'
 
 base_dir = os.path.dirname(os.path.dirname(__file__))
-SCENARIO_PATH = os.path.join(base_dir, ".playground/scenarios/Scenario2.yaml")
+scenario_name = f"Scenario2_{'Transformer' if transformer else 'Padding'}_{algorithm_name}"
+SCENARIO_PATH = os.path.join(base_dir, f".playground/scenarios/{scenario_name}.yaml")
 
 HYPERPARAMS = {
     "DQN": {
@@ -78,14 +82,23 @@ def create_cyborg_env(yaml_path: str):
 
 initial_raw_cyborg = create_cyborg_env(SCENARIO_PATH)
 
-gym_env = TransformerWrapper(
-    agent_name='Blue',
-    raw_cyborg=initial_raw_cyborg,
-    max_steps=100,
-    env_creator=create_cyborg_env,  # NEW: Pass function reference
-    yaml_path=SCENARIO_PATH,  
-    max_actions=240,       # NEW: Pass YAML path
-)
+if transformer:
+    gym_env = TransformerWrapper(
+        agent_name='Blue',
+        raw_cyborg=initial_raw_cyborg,
+        max_steps=100,
+        env_creator=create_cyborg_env,  # NEW: Pass function reference
+        yaml_path=SCENARIO_PATH,  
+        max_actions=240,       # NEW: Pass YAML path
+    )
+else:
+    gym_env = PaddingWrapper(
+        agent_name='Blue',
+        env=initial_raw_cyborg,
+        max_steps=100,
+        env_creator=create_cyborg_env,
+        yaml_path=SCENARIO_PATH,  
+    )
 
 gym_env.reset()
 
@@ -94,7 +107,6 @@ gym_env.reset()
 if USE_PRETRAINED:
     model = ALGORITHM.load(MODEL_PATH, env=gym_env, tensorboard_log=TENSORBOARD_LOG)
 else:
-    algorithm_name = ALGORITHM.__name__
     hyperparams = HYPERPARAMS[algorithm_name]
 
     model = ALGORITHM(env=gym_env, **hyperparams)
