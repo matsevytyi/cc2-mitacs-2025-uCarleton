@@ -127,10 +127,9 @@ class TransformerWrapper(Env,BaseWrapper):
 
     def reset(self, **kwargs):
 
-        if self.step_counter > 0:
-            self._reload_environment()
+        self._reload_environment()
 
-            self.step_counter = 0
+        self.step_counter = 0
         obs = self.env.reset(**kwargs)
         
         # enrich obs with other contextual information
@@ -140,29 +139,28 @@ class TransformerWrapper(Env,BaseWrapper):
         #     encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
         encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
 
-        if self.step_counter > 0:
-            ## update csv with actions from self.action_history and set self.action_history to []
-            if self.action_history:
-                # Create output directory if not exists
-                csv_dir = "action_logs"
-                os.makedirs(csv_dir, exist_ok=True)
+        ## update csv with actions from self.action_history and set self.action_history to []
+        if self.action_history:
+            # Create output directory if not exists
+            csv_dir = "action_logs"
+            os.makedirs(csv_dir, exist_ok=True)
 
-                # File unique per agent_name (or add timestamp if you want)
-                csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Transformer_RedMeander_DQN.csv")
+            # File unique per agent_name (or add timestamp if you want)
+            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Transformer_RedMeander_DQN.csv")
 
-                # Append mode is safe (creates file if not exists)
-                with open(csv_path, mode='a', newline='') as csvfile:
-                    writer = csv.writer(csvfile)
-                    # Optional: write header if file is new
-                    if os.stat(csv_path).st_size == 0:
-                        writer.writerow(['timestamp', 'episode', 'step', 'action_type', 'host_count', 'recon_loss'])
-                    timestamp = datetime.now().isoformat()
-                    for step, action in enumerate(self.action_history):
-                        writer.writerow([timestamp, getattr(self, 'episode', None), step, action, len(self.host_order), self.recon_loss_history[step]])
+            # Append mode is safe (creates file if not exists)
+            with open(csv_path, mode='a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                # Optional: write header if file is new
+                if os.stat(csv_path).st_size == 0:
+                    writer.writerow(['timestamp', 'episode', 'step', 'action_type', 'host_count', 'recon_loss'])
+                timestamp = datetime.now().isoformat()
+                for step, action in enumerate(self.action_history):
+                    writer.writerow([timestamp, getattr(self, 'episode', None), step, action, len(self.host_order), self.recon_loss_history[step]])
 
-            # Clear history after save
-            self.action_history = []
-            self.recon_loss_history = []
+        # Clear history after save
+        self.action_history = []
+        self.recon_loss_history = []
 
             # reload env        
             
@@ -214,7 +212,6 @@ class TransformerWrapper(Env,BaseWrapper):
             'obs_embed': self.transformer_encoder.obs_embed.state_dict(),
             'ip_byte_embed': self.transformer_encoder.ip_byte_embed.state_dict(),
             'cls_token': self.transformer_encoder.cls_token.data,
-            'token_head_from_cls': self.transformer_encoder.token_head_from_cls.state_dict(),
         }
         
         # Reinitialize encoder with new host count

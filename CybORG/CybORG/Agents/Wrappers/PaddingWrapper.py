@@ -88,7 +88,7 @@ class PaddingWrapper(Env, BaseWrapper):
         if self.action_history:
             csv_dir = "action_logs"
             os.makedirs(csv_dir, exist_ok=True)
-            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Padding_DQN.csv")
+            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Padding_PPO.csv")
             
             with open(csv_path, mode='a', newline='') as f:
                 writer = csv.writer(f)
@@ -96,7 +96,7 @@ class PaddingWrapper(Env, BaseWrapper):
                     writer.writerow(['timestamp', 'episode', 'step', 'action_type', 'host_count'])
                 timestamp = datetime.now().isoformat()
                 for step, action in enumerate(self.action_history):
-                    writer.writerow([timestamp, self.episode, step, self.decode_action(action), len(self.host_order)])
+                    writer.writerow([timestamp, self.episode, step, self.decode_action(action)[1], len(self.host_order)])
         
         self.action_history = []
         self.episode += 1
@@ -116,6 +116,8 @@ class PaddingWrapper(Env, BaseWrapper):
         
         # Create fresh environment
         fresh_cyborg = self.env_creator(self.yaml_path)
+
+        self.host_order = tuple(fresh_cyborg.environment_controller.state.hosts.keys())
         
         # Recreate wrapper stack
         if self.agent_name.lower() == 'blue':

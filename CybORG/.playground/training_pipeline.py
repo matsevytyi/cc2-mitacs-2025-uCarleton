@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 
 from CybORG import CybORG
-from CybORG.Agents import RedMeanderAgent
+from CybORG.Agents import B_lineAgent, RedMeanderAgent
 from CybORG.Agents.Wrappers import TransformerWrapper, ChallengeWrapper, PaddingWrapper
 
 from stable_baselines3 import DQN, PPO
@@ -15,14 +15,15 @@ from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 
 # ========== CONFIGURATION ==========
-ALGORITHM = PPO  # Change this to DQN, PPO, etc.
+ALGORITHM = DQN  # Change this to DQN, PPO, etc.
 extended = True
 transformer = True
 pad = False
 
 mode = "TRAIN"
+type = "Transformer" if transformer else "Default"
 
-RUN_ID = "CLS[1,2*64] perhost + SPLIT BACKPROP + save weights"
+RUN_ID = f"test logging {ALGORITHM.__name__} {type} vs BLine"
 TOTAL_TIMESTEPS = 500_000
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -72,7 +73,7 @@ else:
     path = str(inspect.getfile(CybORG))
     path = path[:-10] + '/Shared/Scenarios/Scenario2.yaml'
 
-cyborg = CybORG(path, 'sim', agents={'Red': RedMeanderAgent})
+cyborg = CybORG(path, 'sim', agents={'Red': B_lineAgent})
 cyborg.reset()
 
 if transformer:
@@ -85,7 +86,7 @@ else:
     gym_env = EnvCompatibility(gym_env)
 
 gym_env.reset()
-print(cyborg)
+#print(cyborg)
 
 # ========== MODEL INITIALIZATION ==========
 algorithm_name = ALGORITHM.__name__
@@ -98,7 +99,7 @@ model = ALGORITHM(env=gym_env, **hyperparams)
 # ========== TRAINING ==========
 model.learn(
     total_timesteps=TOTAL_TIMESTEPS,
-    tb_log_name=f"{algorithm_name}_run_{RUN_ID}",
+    tb_log_name=f"{mode}_{algorithm_name}_run_{RUN_ID}",
     log_interval=10
 )
 
@@ -112,3 +113,4 @@ if transformer:
     encoder = gym_env.transformer_encoder  # or gym_env.transformer_encoder or similar
     encoder.save_weights(filename + ".encoder.pth")
     print(f"Encoder weights saved to: {filename}.encoder.pth")
+

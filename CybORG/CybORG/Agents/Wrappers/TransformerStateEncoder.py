@@ -182,10 +182,6 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         except Exception as e:
             print(f"Warning: cls_token failed: {e}")
         
-        try:
-            self.token_head_from_cls.load_state_dict(weights_dict['token_head_from_cls'])
-        except Exception as e:
-            print(f"Warning: token_head_from_cls failed: {e}")
 
 
     
