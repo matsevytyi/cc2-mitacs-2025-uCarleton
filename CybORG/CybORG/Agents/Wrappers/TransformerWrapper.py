@@ -1,3 +1,4 @@
+from types import NoneType
 from gymnasium import Env, spaces
 from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapper,RedTableWrapper,EnumActionWrapper
 
@@ -6,7 +7,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from stable_baselines3 import DQN
+import csv
+from datetime import datetime
+
 
 from CybORG.Agents.Wrappers.TransformerStateEncoder import TransformerStateEncoder
 
@@ -17,7 +20,9 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 # Note: modified challengewrapper to use encoder
 class TransformerWrapper(Env,BaseWrapper):
     def __init__(self, agent_name: str, raw_cyborg, agent=None,
-            reward_threshold=None, max_steps = None, max_actions=None, action_space_mode="pad", device='cpu', version="ip_local"):
+            reward_threshold=None, max_steps = None, max_actions=None, 
+            action_space_mode="pad", 
+            device='cpu', version="ip_local", weights_path=None):
         super().__init__(raw_cyborg, agent)
         self.agent_name = agent_name
         if agent_name.lower() == 'red':
@@ -39,8 +44,7 @@ class TransformerWrapper(Env,BaseWrapper):
         
         self.table_env = table_wrapper(raw_cyborg, output_mode='table')
 
-        self.env = env
-        self.action_space = self.env.action_space
+        self.action_history = []
 
         self.device = device
 
@@ -71,7 +75,13 @@ class TransformerWrapper(Env,BaseWrapper):
         if self.max_actions is not None:
             self.action_space = spaces.Discrete(int(self.max_actions))
 
+        if weights_path:
+            self.transformer_encoder.load_weights(weights_path)
+
+
     def step(self,action=None, debug=False, verbose=False):
+
+        self.action_history.append(self.decode_action(action)[1])
         
         # Map out-of-range actions to a valid one based on the selected mode
         if action is not None:
@@ -93,6 +103,7 @@ class TransformerWrapper(Env,BaseWrapper):
         # enrich obs with other contextual information
         obs = self.extract_host_state(raw_cyborg=self.env.env.env.env.env, obs=obs)
         if verbose:
+            print("action", action, self.decode_action(action))
             print('step obs', obs)
     
         self.step_counter += 1
@@ -116,9 +127,31 @@ class TransformerWrapper(Env,BaseWrapper):
         # with torch.no_grad():
         #     encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
         encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
+
+        ## update csv with actions from self.action_history and set self.action_history to []
+        if self.action_history:
+            # Create output directory if not exists
+            csv_dir = "action_logs"
+            os.makedirs(csv_dir, exist_ok=True)
+
+            # File unique per agent_name (or add timestamp if you want)
+            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_Transformer_RedMeander_DQN.csv")
+
+            # Append mode is safe (creates file if not exists)
+            with open(csv_path, mode='a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                # Optional: write header if file is new
+                if os.stat(csv_path).st_size == 0:
+                    writer.writerow(['timestamp', 'episode', 'step', 'action_type'])
+                timestamp = datetime.now().isoformat()
+                for step, action in enumerate(self.action_history):
+                    writer.writerow([timestamp, getattr(self, 'episode', None), step, action])
+
+        # Clear history after save
+        self.action_history = []
             
         return encoded_obs.detach().cpu().numpy(), {}
-
+    
     def get_attr(self,attribute:str):
         return self.env.get_attr(attribute)
 
@@ -179,3 +212,53 @@ class TransformerWrapper(Env,BaseWrapper):
             }
             
         return hosts_dict
+
+    # Total actions = 2 + (N * 11)
+# where N is the number of hosts in the network
+
+    # Device-agnostic actions (always indices 0-1)
+    SLEEP = 0
+    MONITOR = 1
+
+    # Device-specific actions for host i (where i ranges from 0 to N-1)
+    def get_action_index(self, host_id, action_type):
+        """
+        host_id: int from 0 to N-1
+        action_type: int from 0 to 10 representing one of the 11 actions
+        
+        Action types:
+        0: Analyze
+        1: Remove  
+        2: Restore
+        3-10: Eight different Decoy services
+        """
+        return 2 + (host_id * 11) + action_type
+
+    # Inverse mapping: from flat action index to (device, action)
+    def decode_action(self, action_idx):
+
+        """
+        Convert flat action index to (device_id, action_type) tuple
+        
+        Returns:
+            (device_id, action_type) where:
+            - device_id is None for device-agnostic actions, or 0 to num_hosts-1
+            - action_type: 0=Sleep, 1=Monitor, or 0-10 for device actions
+        """
+        if action_idx == 0:
+            return (None, 'Sleep')
+        elif action_idx == 1:
+            return (None, 'Monitor')
+        else:
+
+            action_names = ['Analyze', 'Remove', 'Restore', 
+                        'DecoyApache', 'DecoyFemitter', 'DecoyHarakaSMTP',
+                        'DecoySmss', 'DecoySSHD', 'DecoySvchost', 
+                        'DecoyTomcat', 'DecoyVsftpd']
+
+            # Device-specific action
+            adjusted_idx = action_idx - 2
+            device_id = adjusted_idx // 11
+            action_type = adjusted_idx % 11
+            
+            return (device_id, action_names[action_type])
