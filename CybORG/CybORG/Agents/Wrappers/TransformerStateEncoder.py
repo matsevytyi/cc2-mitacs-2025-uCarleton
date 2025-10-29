@@ -37,6 +37,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.embedding_dim) * 0.02)
 
         self.error_threshold = 0.8
+        self.recon_loss = 1.00
 
         self.H = initial_host_count
 
@@ -124,6 +125,7 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
 
             recon_loss = self.recon_criterion(reconstruction, host_tokens)
+            self.recon_loss = recon_loss
 
             # Weighted backward propagation
             # Prioritize transformer encoder updates (1.0x) over reconstruction head (0.5x)
@@ -153,6 +155,39 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             'token_head_from_cls': self.token_head_from_cls.state_dict(),
             # any other components you want to save
         }, path)
+
+    def load_weights_from_dict(self, weights_dict):
+        """Load weights from dict (no I/O) - load each separately"""
+        try:
+            self.transformer.load_state_dict(weights_dict['transformer'])
+        except Exception as e:
+            print(f"Warning: transformer failed: {e}")
+        
+        try:
+            self.obs_embed.load_state_dict(weights_dict['obs_embed'])
+        except Exception as e:
+            print(f"Warning: obs_embed failed: {e}")
+        
+        try:
+            self.ip_byte_embed.load_state_dict(weights_dict['ip_byte_embed'])
+        except Exception as e:
+            print(f"Warning: ip_byte_embed failed: {e}")
+        
+        try:
+            # cls_token: convert to Parameter if needed
+            cls_data = weights_dict['cls_token']
+            if isinstance(cls_data, torch.nn.Parameter):
+                cls_data = cls_data.data
+            self.cls_token.data.copy_(cls_data)
+        except Exception as e:
+            print(f"Warning: cls_token failed: {e}")
+        
+        try:
+            self.token_head_from_cls.load_state_dict(weights_dict['token_head_from_cls'])
+        except Exception as e:
+            print(f"Warning: token_head_from_cls failed: {e}")
+
+
     
     def load_weights(self, path):
         """Load encoder weights"""
