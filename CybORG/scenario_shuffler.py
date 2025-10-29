@@ -40,7 +40,7 @@ def churn_hosts(filepath):
                 new_assignments[key].append(all_hosts[i])
                 counter += 1
             
-            churn = calculate_absolute_churn(enterprise_churn_rate[0], enterprise_churn_rate[1], sizes[key])
+            churn_action, churn_quantity = calculate_absolute_churn(enterprise_churn_rate[0], enterprise_churn_rate[1], sizes[key])
             print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
             
         if key == 'Operational':
@@ -48,8 +48,8 @@ def churn_hosts(filepath):
                 new_assignments[key].append(all_hosts[i])
                 counter += 1
 
-                churn_action, churn_quantity = calculate_absolute_churn(operational_host_churn_rate[0], operational_host_churn_rate[1], sizes[key])
-                print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
+            churn_action, churn_quantity = calculate_absolute_churn(operational_host_churn_rate[0], operational_host_churn_rate[1], sizes[key])
+            print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
 
         if key == 'User':
             for i in range(counter, counter + sizes[key]):
@@ -66,16 +66,19 @@ def churn_hosts(filepath):
 
 def calculate_absolute_churn(min_rate, max_rate, current_hosts_in_subnet):
 
+    # random 
+    churn_type = random.choice(['join', 'leave'])
+
     # random choice based on distribution
     churn_rate = np.random.uniform(min_rate, max_rate)
 
     # Calculate expected number of hosts affected
     num_affected = churn_rate * current_hosts_in_subnet
-    # min 1 host is affected, max - 1 host is left
-    num_affected = min(int(round(num_affected)), current_hosts_in_subnet - 1)
 
-    # random 
-    churn_type = random.choice(['join', 'leave'])
+    # max - 3 hosts is left most - 11 hosts are kept
+    if churn_type == 'leave':
+        num_affected = min(int(round(num_affected)), current_hosts_in_subnet - 3)
+    num_affected = min(int(round(num_affected)), 11)
 
     return churn_type, num_affected
 
@@ -93,50 +96,66 @@ def extract_hosts(subnets):
     return sizes, all_hosts
 
 def modify_subnet_hosts(yaml_path, subnet_name, action='join', num_hosts=1):
-    """
-    Simple add/remove hosts from subnet
-    
-    Args:
-        yaml_path: Path to Scenario2.yaml
-        subnet_name: Which subnet (e.g., 'User', 'Enterprise')
-        action: 'add' or 'remove'
-        num_hosts: how many to add/remove
-    """
-    import yaml
+    import yaml, copy
     
     with open(yaml_path, 'r') as f:
         scenario = yaml.safe_load(f)
     
-    subnet = scenario['Subnets'][subnet_name]
-    hosts_list = subnet['Hosts']
+    hosts_list = scenario['Subnets'][subnet_name]['Hosts']
     
     if action == 'join':
-        # Add num_hosts new hosts
         max_num = max([int(''.join(filter(str.isdigit, h))) for h in hosts_list] + [-1])
+        template_host = hosts_list[0]
+        template = scenario['Hosts'][template_host]
+        
         for i in range(num_hosts):
             new_host = f"{subnet_name}{max_num + i + 1}"
             hosts_list.append(new_host)
-            # Add to global hosts dict with default config
-            scenario['Hosts'][new_host] = {
-                'image': 'linux_user_host1',
-                'info': {new_host: {'Interfaces': 'All'}},
-                'ConfidentialityValue': 'None',
-                'AvailabilityValue': 'None',
-                'username': 'ubuntu'
+            
+            # Copy host config
+            scenario['Hosts'][new_host] = copy.deepcopy(template)
+            scenario['Hosts'][new_host]['info'] = {new_host: template['info'][template_host]}
+            
+            # Add to Blue INT (Velociraptor)
+            scenario['Agents']['Blue']['INT']['Hosts'][new_host] = {
+                'Interfaces': 'All',
+                'System info': 'All',
+                'User info': 'All'
             }
+            scenario['Agents']['Blue']['starting_sessions'].append({
+                'hostname': new_host,
+                'name': f'Velo{new_host}',
+                'parent': 'VeloServer',
+                'type': 'VelociraptorClient',
+                'username': template.get('username', 'ubuntu')
+            })
+            
+            # Add to Green INT
+            scenario['Agents']['Green']['INT']['Hosts'][new_host] = {
+                'Interfaces': 'All',
+                'System info': 'All',
+                'User info': 'All'
+            }
+            scenario['Agents']['Green']['starting_sessions'].append({
+                'hostname': new_host,
+                'name': 'GreenSession',
+                'type': 'green_session',
+                'username': 'GreenAgent'
+            })
     
     elif action == 'leave':
-        # Remove last num_hosts hosts
         for _ in range(num_hosts):
             host = hosts_list.pop()
             del scenario['Hosts'][host]
+            del scenario['Agents']['Blue']['INT']['Hosts'][host]
+            del scenario['Agents']['Green']['INT']['Hosts'][host]
+            scenario['Agents']['Blue']['starting_sessions'] = [s for s in scenario['Agents']['Blue']['starting_sessions'] if s['hostname'] != host]
+            scenario['Agents']['Green']['starting_sessions'] = [s for s in scenario['Agents']['Green']['starting_sessions'] if s['hostname'] != host]
     
-    # Update subnet size
-    subnet['Size'] = len(hosts_list)
+    scenario['Subnets'][subnet_name]['Size'] = len(hosts_list)
     
-    # Save back
     with open(yaml_path, 'w') as f:
-        yaml.dump(scenario, f)
+        yaml.dump(scenario, f, default_flow_style=False, sort_keys=False)
     
     print(f"{action.upper()}: {subnet_name} now has {len(hosts_list)} hosts")
 

@@ -1,10 +1,8 @@
 from types import NoneType
 from gymnasium import Env, spaces
 from CybORG.Agents.Wrappers import BaseWrapper, OpenAIGymWrapper, BlueTableWrapper,RedTableWrapper,EnumActionWrapper
+from scenario_shuffler import churn_hosts
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 
 import csv
@@ -22,6 +20,7 @@ class TransformerWrapper(Env,BaseWrapper):
     def __init__(self, agent_name: str, raw_cyborg, agent=None,
             reward_threshold=None, max_steps = None, max_actions=None, 
             action_space_mode="pad", 
+            env_creator=None, yaml_path=None,
             device='cpu', version="ip_local", weights_path=None):
         super().__init__(raw_cyborg, agent)
         self.agent_name = agent_name
@@ -46,6 +45,19 @@ class TransformerWrapper(Env,BaseWrapper):
 
         self.action_history = []
 
+        if env_creator and yaml_path:
+            self.env_creator = env_creator
+            self.yaml_path = yaml_path
+        
+        self.env = env
+        # fixed action space padding/cutoff
+        self.max_actions = max_actions
+        self.action_space_mode = action_space_mode  # "pad" or "cutoff"
+        if self.max_actions is not None:
+            self.action_space = spaces.Discrete(int(self.max_actions))
+        else:
+            self.action_space = self.env.action_space
+
         self.device = device
 
         embedding_dim = 64 # transformer embedding dimension
@@ -68,12 +80,6 @@ class TransformerWrapper(Env,BaseWrapper):
         self.reward_threshold = reward_threshold
         self.max_steps = max_steps
         self.step_counter = None
-        
-        # fixed action space padding/cutoff
-        self.max_actions = max_actions
-        self.action_space_mode = action_space_mode  # "pad" or "cutoff"
-        if self.max_actions is not None:
-            self.action_space = spaces.Discrete(int(self.max_actions))
 
         if weights_path:
             self.transformer_encoder.load_weights(weights_path)
@@ -118,6 +124,9 @@ class TransformerWrapper(Env,BaseWrapper):
         return encoded_obs.detach().cpu().numpy(), reward, terminated, truncated, info
 
     def reset(self, **kwargs):
+
+        self._reload_environment()
+
         self.step_counter = 0
         obs = self.env.reset(**kwargs)
         
@@ -135,7 +144,7 @@ class TransformerWrapper(Env,BaseWrapper):
             os.makedirs(csv_dir, exist_ok=True)
 
             # File unique per agent_name (or add timestamp if you want)
-            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_Transformer_RedMeander_DQN.csv")
+            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Transformer_RedMeander_DQN.csv")
 
             # Append mode is safe (creates file if not exists)
             with open(csv_path, mode='a', newline='') as csvfile:
@@ -149,9 +158,63 @@ class TransformerWrapper(Env,BaseWrapper):
 
         # Clear history after save
         self.action_history = []
+
+        # reload env        
             
         return encoded_obs.detach().cpu().numpy(), {}
     
+    def _reload_environment(self, verbose=False):
+        """
+        INTERNAL: Reload CybORG environment from scratch
+        Called on reset() to pick up YAML changes
+        """
+        try: 
+            if self.env_creator is None or self.yaml_path is None:
+                print("Reload Ignored")
+                return False
+        except Exception as e:
+            if verbose:
+                print(f"Warning: Failed to reload environment: {e}")
+            return False    
+        
+        # try:
+
+        print("Reload in place")
+        # churn devices
+        churn_hosts(self.yaml_path)
+        
+        # create fresh CybORG instance
+        fresh_cyborg = self.env_creator(self.yaml_path)
+        self.raw_cyborg = fresh_cyborg
+        
+        # Recreate wrapper stack
+        if self.agent_name.lower() == 'blue':
+            table_wrapper = BlueTableWrapper
+        else:
+            table_wrapper = RedTableWrapper
+        
+        env = table_wrapper(fresh_cyborg, output_mode='vector')
+        env = EnumActionWrapper(env)
+        env = OpenAIGymWrapper(agent_name=self.agent_name, env=env)
+        
+        self.env = env
+        self.table_env = table_wrapper(fresh_cyborg, output_mode='table')
+        
+        # Update host order (may have changed)
+        self.host_order = tuple(self.raw_cyborg.environment_controller.state.hosts.keys())
+        
+        # Reinitialize encoder with new host count
+        self.transformer_encoder = TransformerStateEncoder(
+            observation_space=self.observation_space,
+            embedding_dim=64,
+            initial_host_count=len(self.host_order)
+        ).to(self.device)
+        
+        return True
+        # except Exception as e:
+        #     print(f"Warning: Failed to reload environment: {e}")
+        #     return False
+
     def get_attr(self,attribute:str):
         return self.env.get_attr(attribute)
 
