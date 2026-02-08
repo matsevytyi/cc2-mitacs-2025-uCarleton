@@ -41,7 +41,7 @@ def churn_hosts(filepath):
                 counter += 1
             
             churn_action, churn_quantity = calculate_absolute_churn(enterprise_churn_rate[0], enterprise_churn_rate[1], sizes[key])
-            print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
+            #print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
             
         if key == 'Operational':
             for i in range(counter, counter + sizes[key]):
@@ -49,7 +49,7 @@ def churn_hosts(filepath):
                 counter += 1
 
             churn_action, churn_quantity = calculate_absolute_churn(operational_host_churn_rate[0], operational_host_churn_rate[1], sizes[key])
-            print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
+            #print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
 
         if key == 'User':
             for i in range(counter, counter + sizes[key]):
@@ -57,7 +57,7 @@ def churn_hosts(filepath):
                 counter += 1
             
             churn_action, churn_quantity = calculate_absolute_churn(user_networks_churn_rate[0], user_networks_churn_rate[1], sizes[key])
-            print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
+            #print(f"[{key.capitalize()} subnet] selected action '{churn_action}' for '{churn_quantity} devices'")
 
             if churn_quantity != 0:
                 modify_subnet_hosts(filepath, key, action=churn_action, num_hosts=churn_quantity)
@@ -78,7 +78,8 @@ def calculate_absolute_churn(min_rate, max_rate, current_hosts_in_subnet):
     # max - 3 hosts is left most - 11 hosts are kept
     if churn_type == 'leave':
         num_affected = min(int(round(num_affected)), current_hosts_in_subnet - 3)
-    num_affected = min(int(round(num_affected)), 11)
+    else:
+        num_affected = min(int(round(num_affected)), 14 - current_hosts_in_subnet)
 
     return churn_type, num_affected
 
@@ -157,7 +158,7 @@ def modify_subnet_hosts(yaml_path, subnet_name, action='join', num_hosts=1):
     with open(yaml_path, 'w') as f:
         yaml.dump(scenario, f, default_flow_style=False, sort_keys=False)
     
-    print(f"{action.upper()}: {subnet_name} now has {len(hosts_list)} hosts")
+    #print(f"{action.upper()}: {subnet_name} now has {len(hosts_list)} hosts")
 
 def update_yaml_file(filepath, mode='shuffle', new_assignments=None, seed=None):
     """
