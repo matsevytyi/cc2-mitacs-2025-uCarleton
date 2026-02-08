@@ -13,14 +13,15 @@ from stable_baselines3.common.logger import configure
 
 # ========== CONFIGURATION ==========
 
-transformer = True
+transformer = False
 
 ALGORITHM = DQN
 algorithm_name = ALGORITHM.__name__
-USE_PRETRAINED = False
-MODEL_PATH = "DQN_transformer_model.zip"
-TOTAL_TIMESTEPS = 500_000
-RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_dynamic_topology"
+USE_PRETRAINED = True
+MODEL_PATH = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_training_for_dynamic"
+TOTAL_TIMESTEPS = 100_000 if USE_PRETRAINED else 500_000
+RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_tuning_x10_dynamic_topology"
+#RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_training_for_dynamic"
 TENSORBOARD_LOG = "./logs/"
 
 device = 'cpu'
@@ -87,19 +88,24 @@ if transformer:
         agent_name='Blue',
         raw_cyborg=initial_raw_cyborg,
         max_steps=100,
+        knowledge_update_mode="tune",
         env_creator=create_cyborg_env,  # NEW: Pass function reference
         yaml_path=SCENARIO_PATH,  
-        max_actions=240,       # NEW: Pass YAML path
+        max_actions=240,       
+        weights_path=f"{MODEL_PATH}.encoder.pth"
     )
 else:
     gym_env = PaddingWrapper(
         agent_name='Blue',
         env=initial_raw_cyborg,
         max_steps=100,
+        knowledge_update_mode="tune",
         env_creator=create_cyborg_env,
         yaml_path=SCENARIO_PATH,  
     )
 
+if USE_PRETRAINED:
+    gym_env._reload_environment()
 gym_env.reset()
 
 # 2) Create and train model
@@ -110,7 +116,6 @@ else:
     hyperparams = HYPERPARAMS[algorithm_name]
 
     model = ALGORITHM(env=gym_env, **hyperparams)
-
 
 # 4) Train
 print(f"Starting training with {'DYNAMIC' if True else 'STATIC'} topology")

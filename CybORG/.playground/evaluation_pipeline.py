@@ -1,108 +1,123 @@
 import os, sys, inspect
+import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from CybORG import CybORG
-from CybORG.Agents import B_lineAgent
-
-from CybORG.Agents.Wrappers import PaddingWrapper, TransformerWrapper, ChallengeWrapper
+from CybORG.Agents import RedMeanderAgent
+from CybORG.Agents.Wrappers import PaddingWrapper, TransformerWrapper
 
 from stable_baselines3 import DQN, PPO
-from gymnasium.wrappers.step_api_compatibility import StepAPICompatibility
-from gymnasium.wrappers import EnvCompatibility
-#from sb3_contrib import C51
-
-
-from stable_baselines3.common.logger import configure
 from stable_baselines3.common.evaluation import evaluate_policy
-from stable_baselines3.common.monitor import Monitor
 
-import numpy as np
+from scenario_shuffler import update_yaml_file
 
-#from RewardLoggingCallback import RewardLoggingCallback
-#from MetricLoggingCallback import MetricLoggingCallback
-
-
-# Load cfg
+# ========== CONFIGURATION ==========
+ALGORITHMS = [DQN, PPO]  # Evaluate both
+transformer = True
 extended = True
-transformer = False
 
-# Locate Scenario2.yaml path
+RUN_ID = "CLS[1,2*64] perhost + SPLIT BACKPROP + save weights"
+TOTAL_TIMESTEPS = 500_000
+
+weights_path = "CLS[1,2*64] perhost + SPLIT BACKPROP + save weights + 1.0"
+
+def create_cyborg_env(yaml_path: str):
+    """
+    Create fresh CybORG environment from YAML
+    This will be called every reset() to reload topology
+    """
+    cyborg = CybORG(yaml_path, 'sim', agents={'Red': RedMeanderAgent})
+    cyborg.reset()
+    return cyborg
+
+# ========== HELPER FUNCTIONS ==========
+def reload_env(path, transformer, shuffle=False, algorithm=None):
+    if shuffle:
+        new_assignments = {
+            'Enterprise': ['User0', 'Enterprise2', 'Enterprise1', 'Op_Host2'],
+            'Operational': ['Op_Host1', 'Enterprise0', 'User4', 'Op_Server0'],
+            'User': ['Op_Host0', 'User3', 'User1', 'Defender', 'User2']
+        }
+        update_yaml_file(path, mode='assign', new_assignments=new_assignments)
+    
+    cyborg = CybORG(path, 'sim', agents={'Red': RedMeanderAgent})
+    
+    if transformer:
+        gym_env = TransformerWrapper(
+            raw_cyborg=cyborg, 
+            agent_name='Blue', 
+            max_steps=100, 
+            weights_path=f"TRAIN.{algorithm}.{weights_path}.encoder.pth")
+    else:
+        gym_env = PaddingWrapper(
+            env=cyborg, agent_name='Blue', 
+            max_devices=100, 
+            max_steps=100
+            )
+    
+    gym_env.reset()
+    return gym_env
+
+def evaluate_model(algorithm_class, filename, gym_env, env_name):
+    """Evaluate a model on a given environment"""
+    try:
+        model = algorithm_class.load(filename, env=gym_env)
+        mean_reward, std_reward = evaluate_policy(
+            model, gym_env, n_eval_episodes=10, 
+            deterministic=True, return_episode_rewards=True
+        )
+        
+        print(f"\n{algorithm_class.__name__} on {env_name}:")
+        print(f"  Mean reward: {0.5 * np.max(mean_reward) + 0.5 * np.min(mean_reward):.2f}")
+        print(f"  Max reward:  {np.max(mean_reward):.2f}")
+        print(f"  Min reward:  {np.min(mean_reward):.2f}")
+        print(f"  Std reward:  {np.mean(std_reward):.2f}")
+        
+        return {
+            'algorithm': algorithm_class.__name__,
+            'env': env_name,
+            'mean': 0.5 * np.max(mean_reward) + 0.5 * np.min(mean_reward),
+            'max': np.max(mean_reward),
+            'min': np.min(mean_reward),
+            'std': np.mean(std_reward)
+        }
+    except Exception as e:
+        print(f"Error evaluating {algorithm_class.__name__} on {env_name}: {e}")
+        return None
+
+# ========== PATHS ==========
 if extended:
-
-    path_1 = "Scenario2.yaml"
-    path_2 = "Scenario2_more_hosts.yaml"
-    path_3 = "Scenario2_4th_subnet.yaml"
-    # path = "Scenario2_Linear.yaml"
-    # path = "Scenario2_Extended.yaml"
-
-    path_1 = os.path.dirname(os.path.dirname(__file__)) + "/.playground/scenarios/" + path_1
-    path_2 = os.path.dirname(os.path.dirname(__file__)) + "/.playground/scenarios/" + path_2
-    path_3 = os.path.dirname(os.path.dirname(__file__)) + "/.playground/scenarios/" + path_3
+    path_1 = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        ".playground/scenarios/Scenario2.yaml"
+    )
 else:
+    path_1 = str(inspect.getfile(CybORG))
+    path_1 = path_1[:-10] + '/Shared/Scenarios/Scenario2.yaml'
 
-    path = str(inspect.getfile(CybORG))
-    path = path[:-10] + '/Shared/Scenarios/Scenario2.yaml'
+# ========== EVALUATION ==========
+results = []
 
-cyborg_1 = CybORG(path_1, 'sim', agents={'Red': B_lineAgent})
-cyborg_1.reset()
-
-cyborg_2 = CybORG(path_2, 'sim', agents={'Red': B_lineAgent})
-cyborg_2.reset()
-
-#cyborg_3 = CybORG(path_3, 'sim', agents={'Red': B_lineAgent})
-#cyborg_3.reset()
-
-if transformer:
-    gym_env_1 = TransformerWrapper(raw_cyborg=cyborg_1, agent_name='Blue', max_steps=50)
-    gym_env_2 = TransformerWrapper(raw_cyborg=cyborg_2, agent_name='Blue', max_steps=50)
-    #gym_env_3 = TransformerWrapper(raw_cyborg=cyborg_3, agent_name='Blue', max_steps=50)
-else:
-    gym_env_1 = PaddingWrapper(env=cyborg_1, agent_name='Blue', max_devices=100, max_steps=50)
-    gym_env_2 = PaddingWrapper(env=cyborg_2, agent_name='Blue', max_devices=100, max_steps=50)
-    #gym_env_3 = PaddingWrapper(env=cyborg_3, agent_name='Blue', max_devices=100, max_steps=50)
-
+for algorithm in ALGORITHMS:
+    algorithm_name = algorithm.__name__
+    wrapper_type = "transformer" if transformer else "padding"
+    filename = f"{algorithm_name}_{wrapper_type}_model_{TOTAL_TIMESTEPS}_{RUN_ID}.zip"
     
-#gym_env = StepAPICompatibility(gym_env, output_truncation_bool=True)
+    print(f"\n{'='*60}")
+    print(f"Evaluating {algorithm_name} ({wrapper_type} wrapper)")
+    print(f"{'='*60}")
     
-#gym_env = Monitor(gym_env)
+    # Training environment
+    gym_env_train = reload_env(path_1, transformer, shuffle=False, algorithm=algorithm_name)
+    result = evaluate_model(algorithm, filename, gym_env_train, "Training Env")
+    if result:
+        results.append(result)
     
-gym_env_1.reset()
-gym_env_2.reset()
-#gym_env_3.reset()
 
-# ppo/c51 - try
-
-filename = "dqn_transformer_model" if transformer else "dqn_padding_model_100000"
-
-model = DQN.load(filename, env=gym_env_1)
-mean_reward, std_reward = evaluate_policy(model, gym_env_1, n_eval_episodes=10, deterministic=True, return_episode_rewards=True)
-print(f"Mean/max/min reward for training env: {np.mean(mean_reward)}/{np.max(mean_reward)}/{np.min(mean_reward)}")
-
-# data, params = DQN.load(filename, env=None, device="cpu", print_system_info=True, _load_data=True)
-
-# # # force action space to current env
-# data["action_space"] = gym_env_2.action_space
-
-# reload using patched data
-model = DQN.load(
-    filename,
-    env=gym_env_2,
-    custom_objects={"action_space": gym_env_2.action_space},
-    device="cpu"
-)
-
-# Fix the output layers to match new env
-with torch.no_grad():
-    old_weight = model.policy.q_net.q_net[-1].weight.data
-    old_bias = model.policy.q_net.q_net[-1].bias.data
-
-    model.q_net.q_net[-1].weight.data[:old_weight.shape[0]] = old_weight
-    model.q_net.q_net[-1].bias.data[:old_bias.shape[0]] = old_bias
-
-mean_reward, std_reward = evaluate_policy(model, gym_env_2, n_eval_episodes=10, deterministic=True, return_episode_rewards=True)
-print(f"Mean/max/min reward for env with more hosts: {np.mean(mean_reward)}/{np.max(mean_reward)}/{np.min(mean_reward)}")
-
-# model = DQN.load(filename, env=gym_env_3)
-# mean_reward, std_reward = evaluate_policy(model, gym_env_3, n_eval_episodes=10, deterministic=True, return_episode_rewards=True)
-# print(f"Mean/max/min reward for env with more subnets: {np.mean(mean_reward)}/{np.max(mean_reward)}/{np.min(mean_reward)}")
+# ========== SUMMARY ==========
+print(f"\n{'='*60}")
+print("SUMMARY")
+print(f"{'='*60}")
+for r in results:
+    print(f"{r['algorithm']:8} | {r['env']:15} | Mean: {r['mean']:7.2f} | Max: {r['max']:7.2f} | Min: {r['min']:7.2f}")
