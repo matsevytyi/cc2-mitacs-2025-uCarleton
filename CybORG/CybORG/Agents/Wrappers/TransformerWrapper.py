@@ -19,7 +19,7 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 class TransformerWrapper(Env,BaseWrapper):
     def __init__(self, agent_name: str, raw_cyborg, agent=None,
             reward_threshold=None, max_steps = None, max_actions=None, 
-            action_space_mode="pad", 
+            action_space_mode="pad", knowledge_update_mode="train",
             env_creator=None, yaml_path=None,
             device='cpu', version="ip_local", weights_path=None):
         super().__init__(raw_cyborg, agent)
@@ -30,6 +30,8 @@ class TransformerWrapper(Env,BaseWrapper):
             table_wrapper = BlueTableWrapper
         else:
             raise ValueError('Invalid Agent Name')
+
+        self.knowledge_update_mode = knowledge_update_mode
         
         self.version = version
         self.raw_cyborg = raw_cyborg
@@ -80,7 +82,14 @@ class TransformerWrapper(Env,BaseWrapper):
 
         self.reward_threshold = reward_threshold
         self.max_steps = max_steps
+
+        self.episode = 0
         self.step_counter = 0
+        self.total_env_step_counter = 0
+
+        self.episode_reward = 0
+        self.episode_rewards_list = []
+        self.episode_lengths_list = []
 
         if weights_path:
             self.transformer_encoder.load_weights(weights_path)
@@ -105,6 +114,8 @@ class TransformerWrapper(Env,BaseWrapper):
                         action = self.env.action_space.sample()
                         
         obs, reward, terminated, info = self.env.step(action=action)
+
+        self.episode_reward += reward
         
         # self.env.env.env.env.env is same as active self.raw_cyborg
 
@@ -115,6 +126,7 @@ class TransformerWrapper(Env,BaseWrapper):
             print('step obs', obs)
     
         self.step_counter += 1
+        self.total_env_step_counter += 1
         truncated = False
         if self.max_steps is not None and self.step_counter >= self.max_steps:
             truncated = True
@@ -127,9 +139,16 @@ class TransformerWrapper(Env,BaseWrapper):
 
     def reset(self, **kwargs):
 
-        self._reload_environment()
-
+        if self.knowledge_update_mode == "tune":
+            if self.total_env_step_counter > 150_000:
+                self._reload_environment()
+                self.total_env_step_counter = 0
+        
+        self.episode_rewards_list.append(self.episode_reward)
+        self.episode_lengths_list.append(self.step_counter)
+        self.episode_reward = 0
         self.step_counter = 0
+
         obs = self.env.reset(**kwargs)
         
         # enrich obs with other contextual information
@@ -146,7 +165,7 @@ class TransformerWrapper(Env,BaseWrapper):
             os.makedirs(csv_dir, exist_ok=True)
 
             # File unique per agent_name (or add timestamp if you want)
-            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Transformer_RedMeander_DQN.csv")
+            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_x150_extended_Tuning_Transformer_RedMeander_DQN.csv")
 
             # Append mode is safe (creates file if not exists)
             with open(csv_path, mode='a', newline='') as csvfile:
@@ -157,6 +176,8 @@ class TransformerWrapper(Env,BaseWrapper):
                 timestamp = datetime.now().isoformat()
                 for step, action in enumerate(self.action_history):
                     writer.writerow([timestamp, getattr(self, 'episode', None), step, action, len(self.host_order), self.recon_loss_history[step]])
+
+        self.episode += 1
 
         # Clear history after save
         self.action_history = []
@@ -227,6 +248,17 @@ class TransformerWrapper(Env,BaseWrapper):
         # except Exception as e:
         #     print(f"Warning: Failed to reload environment: {e}")
         #     return False
+    def get_episode_rewards(self):
+        """Return list of episode rewards since last call, then clear"""
+        rewards = self.episode_rewards_list.copy()
+        self.episode_rewards_list.clear()
+        return rewards
+
+    def get_episode_lengths(self):
+        """Return list of episode lengths since last call, then clear"""
+        lengths = self.episode_lengths_list.copy()
+        self.episode_lengths_list.clear()
+        return lengths
 
     def get_attr(self,attribute:str):
         return self.env.get_attr(attribute)

@@ -16,6 +16,7 @@ class PaddingWrapper(Env, BaseWrapper):
     
     def __init__(self, agent_name: str, env, max_devices=100, agent=None,
             reward_threshold=None, max_steps=None, 
+            knowledge_update_mode = "train",
             env_creator=None, yaml_path=None):
         super().__init__(env, agent)
         self.agent_name = agent_name
@@ -29,6 +30,8 @@ class PaddingWrapper(Env, BaseWrapper):
         self.host_order = tuple(env.environment_controller.state.hosts.keys())
         
         self.max_devices = max_devices
+
+        self.knowledge_update_mode = knowledge_update_mode
         
         # Store env reload params
         if env_creator and yaml_path:
@@ -47,7 +50,6 @@ class PaddingWrapper(Env, BaseWrapper):
         
         # Track actions
         self.action_history = []
-        self.episode = 0
         
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -58,7 +60,14 @@ class PaddingWrapper(Env, BaseWrapper):
         
         self.reward_threshold = reward_threshold
         self.max_steps = max_steps
-        self.step_counter = None
+
+        self.episode = 0
+        self.step_counter = 0
+        self.total_env_step_counter = 0
+
+        self.episode_reward = 0
+        self.episode_rewards_list = []
+        self.episode_lengths_list = []
 
     def step(self, action=None):
         if action is not None:
@@ -69,8 +78,11 @@ class PaddingWrapper(Env, BaseWrapper):
         
         obs, reward, terminated, info = self.env.step(action=action)
         obs = self.pad_observation(obs, self.max_devices)
+
+        self.episode_reward += reward
         
         self.step_counter += 1
+        self.total_env_step_counter += 1
         truncated = False
         if self.max_steps is not None and self.step_counter >= self.max_steps:
             truncated = True
@@ -78,9 +90,17 @@ class PaddingWrapper(Env, BaseWrapper):
         return obs, reward, terminated, truncated, info
 
     def reset(self, **kwargs):
-        self._reload_environment()
+
+        if self.knowledge_update_mode == "tune":
+            if self.total_env_step_counter > 150_000:
+                self._reload_environment()
+                self.total_env_step_counter = 0
         
+        self.episode_rewards_list.append(self.episode_reward)
+        self.episode_lengths_list.append(self.step_counter)
+        self.episode_reward = 0
         self.step_counter = 0
+
         obs = self.env.reset(**kwargs)
         obs = self.pad_observation(obs, self.max_devices)
         
@@ -88,7 +108,7 @@ class PaddingWrapper(Env, BaseWrapper):
         if self.action_history:
             csv_dir = "action_logs"
             os.makedirs(csv_dir, exist_ok=True)
-            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_Padding_PPO.csv")
+            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_x150_extended_Tuning_Padding_DQN.csv")
             
             with open(csv_path, mode='a', newline='') as f:
                 writer = csv.writer(f)
@@ -132,6 +152,18 @@ class PaddingWrapper(Env, BaseWrapper):
         self.env = env
         
         return True
+
+    def get_episode_rewards(self):
+        """Return list of episode rewards since last call, then clear"""
+        rewards = self.episode_rewards_list.copy()
+        self.episode_rewards_list.clear()
+        return rewards
+
+    def get_episode_lengths(self):
+        """Return list of episode lengths since last call, then clear"""
+        lengths = self.episode_lengths_list.copy()
+        self.episode_lengths_list.clear()
+        return lengths
 
     def get_attr(self, attribute: str):
         return self.env.get_attr(attribute)
