@@ -8,22 +8,26 @@ import torch
 
 from CybORG import CybORG
 from CybORG.Agents import B_lineAgent, RedMeanderAgent
-from CybORG.Agents.Wrappers import TransformerWrapper, ChallengeWrapper, PaddingWrapper
+from CybORG.Agents.Wrappers import DeepSetsPermInvWrapper, TransformerWrapper, ChallengeWrapper, PaddingWrapper
 
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 
 # ========== CONFIGURATION ==========
-ALGORITHM = DQN  # Change this to DQN, PPO, etc.
+ALGORITHM = PPO  # Change this to DQN, PPO, etc.
+
+mode = "transformer" # "transformer", "ds", or "padding"
+
+transformer = (mode == "transformer")
+deepset = (mode == "ds")
+pad = (mode == "padding")
+
+method = "TRAIN"
+
+RUN_ID = f"{method}_{mode}_{ALGORITHM.__name__}_vs_RedMeander"
 extended = True
-transformer = True
-pad = False
 
-mode = "TRAIN"
-type = "Transformer" if transformer else "Default"
-
-RUN_ID = f"test logging {ALGORITHM.__name__} {type} vs BLine"
 TOTAL_TIMESTEPS = 500_000
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -73,13 +77,15 @@ else:
     path = str(inspect.getfile(CybORG))
     path = path[:-10] + '/Shared/Scenarios/Scenario2.yaml'
 
-cyborg = CybORG(path, 'sim', agents={'Red': B_lineAgent})
+cyborg = CybORG(path, 'sim', agents={'Red': RedMeanderAgent})
 cyborg.reset()
 
 if transformer:
-    gym_env = TransformerWrapper(raw_cyborg=cyborg, agent_name='Blue', max_steps=100)
+    gym_env = TransformerWrapper(raw_cyborg=cyborg, agent_name='Blue', max_steps=100, device=device, max_actions=240)
 elif pad:
     gym_env = PaddingWrapper(env=cyborg, agent_name='Blue', max_devices=100, max_steps=100)
+elif deepset:
+    gym_env = DeepSetsPermInvWrapper(raw_cyborg=cyborg, agent_name='Blue', max_actions=240, max_steps=100)
 else:
     gym_env = ChallengeWrapper(env=cyborg, agent_name='Blue', max_steps=100)
     from gymnasium.wrappers import EnvCompatibility
@@ -92,25 +98,22 @@ gym_env.reset()
 algorithm_name = ALGORITHM.__name__
 hyperparams = HYPERPARAMS[algorithm_name]
 
-filename = mode + "." + algorithm_name + "." + RUN_ID
-
 model = ALGORITHM(env=gym_env, **hyperparams)
 
 # ========== TRAINING ==========
 model.learn(
     total_timesteps=TOTAL_TIMESTEPS,
-    tb_log_name=f"{mode}_{algorithm_name}_run_{RUN_ID}",
+    tb_log_name=f"{RUN_ID}",
     log_interval=10
 )
 
 # ========== SAVE MODEL ==========
 wrapper_type = "transformer" if transformer else "padding" if pad else "challenge"
-filename = filename
-model.save(filename)
-print(f"Model saved to: {filename}.zip")
+model.save(RUN_ID)
+print(f"Model saved to: {RUN_ID}.zip")
 
-if transformer:
-    encoder = gym_env.transformer_encoder  # or gym_env.transformer_encoder or similar
-    encoder.save_weights(filename + ".encoder.pth")
-    print(f"Encoder weights saved to: {filename}.encoder.pth")
+if transformer or deepset:
+    encoder = gym_env.encoder  # or gym_env.transformer_encoder or similar
+    encoder.save_weights(RUN_ID + ".encoder.pth")
+    print(f"Encoder weights saved to: {RUN_ID}.encoder.pth")
 

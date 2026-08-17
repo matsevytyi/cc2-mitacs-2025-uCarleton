@@ -1,123 +1,136 @@
 import os, sys, inspect
+import time
+from statistics import mean, stdev
 import numpy as np
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# CybORG Imports
+from CybORG import CybORG, CYBORG_VERSION
+from CybORG.Agents import B_lineAgent, SleepAgent
+from CybORG.Agents.SimpleAgents.Meander import RedMeanderAgent
 
-from CybORG import CybORG
-from CybORG.Agents import RedMeanderAgent
-from CybORG.Agents.Wrappers import PaddingWrapper, TransformerWrapper
-
-from stable_baselines3 import DQN, PPO
-from stable_baselines3.common.evaluation import evaluate_policy
-
-from scenario_shuffler import update_yaml_file
+# Your Custom Imports (Adjust paths as necessary)
+from CybORG.Agents.Wrappers import TransformerWrapper, DeepSetsPermInvWrapper, PaddingWrapper
+from stable_baselines3 import PPO, DQN
 
 # ========== CONFIGURATION ==========
-ALGORITHMS = [DQN, PPO]  # Evaluate both
-transformer = True
-extended = True
+MAX_EPS = 100
+agent_name = 'Blue'
+scenario = 'Scenario2'
 
-RUN_ID = "CLS[1,2*64] perhost + SPLIT BACKPROP + save weights"
-TOTAL_TIMESTEPS = 500_000
+# Which architecture are you evaluating?
+mode = "transformer" # "transformer", "ds", or "padding"
+ALGORITHM = DQN
 
-weights_path = "CLS[1,2*64] perhost + SPLIT BACKPROP + save weights + 1.0"
+transformer = (mode == "transformer")
+deepset = (mode == "ds")
 
-def create_cyborg_env(yaml_path: str):
-    """
-    Create fresh CybORG environment from YAML
-    This will be called every reset() to reload topology
-    """
-    cyborg = CybORG(yaml_path, 'sim', agents={'Red': RedMeanderAgent})
+# Model and Weights Paths
+ARCH_STR = "Transformer" if transformer else "DeepSets" if deepset else "Padding"
+MODEL_PATH = f"{ALGORITHM.__name__}_{ARCH_STR}_tuning_x150_extended_dynamic_topology.zip"
+WEIGHTS_PATH = f"{ALGORITHM.__name__}_{ARCH_STR}_tuning_x150_extended_dynamic_topology.encoder.pth"
+
+base_dir = os.path.dirname(os.path.dirname(__file__))
+SCENARIO_PATH = os.path.join(base_dir, f".playground/scenarios/Scenario2_{ARCH_STR}_{ALGORITHM.__name__}.yaml")
+
+def create_cyborg_env(yaml_path: str, red_agent_class):
+    """Creates a raw CybORG environment with a specific Red agent"""
+    cyborg = CybORG(yaml_path, 'sim', agents={'Red': red_agent_class})
     cyborg.reset()
     return cyborg
 
-# ========== HELPER FUNCTIONS ==========
-def reload_env(path, transformer, shuffle=False, algorithm=None):
-    if shuffle:
-        new_assignments = {
-            'Enterprise': ['User0', 'Enterprise2', 'Enterprise1', 'Op_Host2'],
-            'Operational': ['Op_Host1', 'Enterprise0', 'User4', 'Op_Server0'],
-            'User': ['Op_Host0', 'User3', 'User1', 'Defender', 'User2']
-        }
-        update_yaml_file(path, mode='assign', new_assignments=new_assignments)
-    
-    cyborg = CybORG(path, 'sim', agents={'Red': RedMeanderAgent})
-    
+def wrap(cyborg_env, red_agent_class):
+    """Wraps the raw CybORG env with your specific Neural Encoder Wrapper"""
     if transformer:
-        gym_env = TransformerWrapper(
-            raw_cyborg=cyborg, 
-            agent_name='Blue', 
-            max_steps=100, 
-            weights_path=f"TRAIN.{algorithm}.{weights_path}.encoder.pth")
-    else:
-        gym_env = PaddingWrapper(
-            env=cyborg, agent_name='Blue', 
-            max_devices=100, 
-            max_steps=100
-            )
-    
-    gym_env.reset()
-    return gym_env
-
-def evaluate_model(algorithm_class, filename, gym_env, env_name):
-    """Evaluate a model on a given environment"""
-    try:
-        model = algorithm_class.load(filename, env=gym_env)
-        mean_reward, std_reward = evaluate_policy(
-            model, gym_env, n_eval_episodes=10, 
-            deterministic=True, return_episode_rewards=True
+        return TransformerWrapper(
+            agent_name=agent_name,
+            raw_cyborg=cyborg_env,
+            max_steps=100,
+            knowledge_update_mode="eval", # Important: disables topology tuning logic
+            env_creator=lambda path: create_cyborg_env(path, red_agent_class),
+            yaml_path=SCENARIO_PATH,  
+            max_actions=240,       
+            weights_path=WEIGHTS_PATH
         )
-        
-        print(f"\n{algorithm_class.__name__} on {env_name}:")
-        print(f"  Mean reward: {0.5 * np.max(mean_reward) + 0.5 * np.min(mean_reward):.2f}")
-        print(f"  Max reward:  {np.max(mean_reward):.2f}")
-        print(f"  Min reward:  {np.min(mean_reward):.2f}")
-        print(f"  Std reward:  {np.mean(std_reward):.2f}")
-        
-        return {
-            'algorithm': algorithm_class.__name__,
-            'env': env_name,
-            'mean': 0.5 * np.max(mean_reward) + 0.5 * np.min(mean_reward),
-            'max': np.max(mean_reward),
-            'min': np.min(mean_reward),
-            'std': np.mean(std_reward)
-        }
-    except Exception as e:
-        print(f"Error evaluating {algorithm_class.__name__} on {env_name}: {e}")
-        return None
+    elif deepset:
+        return DeepSetsPermInvWrapper(
+            agent_name=agent_name,
+            raw_cyborg=cyborg_env,
+            max_steps=100,
+            knowledge_update_mode="eval",
+            env_creator=lambda path: create_cyborg_env(path, red_agent_class),
+            yaml_path=SCENARIO_PATH,  
+            max_actions=240,       
+            weights_path=WEIGHTS_PATH
+        )
+    else:
+        return PaddingWrapper(
+            agent_name=agent_name,
+            env=cyborg_env,
+            max_steps=100,
+            knowledge_update_mode="eval",
+            env_creator=lambda path: create_cyborg_env(path, red_agent_class),
+            yaml_path=SCENARIO_PATH,  
+        )
 
-# ========== PATHS ==========
-if extended:
-    path_1 = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        ".playground/scenarios/Scenario2.yaml"
-    )
-else:
-    path_1 = str(inspect.getfile(CybORG))
-    path_1 = path_1[:-10] + '/Shared/Scenarios/Scenario2.yaml'
-
-# ========== EVALUATION ==========
-results = []
-
-for algorithm in ALGORITHMS:
-    algorithm_name = algorithm.__name__
-    wrapper_type = "transformer" if transformer else "padding"
-    filename = f"{algorithm_name}_{wrapper_type}_model_{TOTAL_TIMESTEPS}_{RUN_ID}.zip"
+if __name__ == "__main__":
+    print(f"Loading {ALGORITHM.__name__} model: {MODEL_PATH}")
     
-    print(f"\n{'='*60}")
-    print(f"Evaluating {algorithm_name} ({wrapper_type} wrapper)")
-    print(f"{'='*60}")
+    # 1. We must load the model using a dummy environment first
+    dummy_raw = create_cyborg_env(SCENARIO_PATH, B_lineAgent)
+    dummy_wrapped = wrap(dummy_raw, B_lineAgent)
+    model = ALGORITHM.load(MODEL_PATH, env=dummy_wrapped)
     
-    # Training environment
-    gym_env_train = reload_env(path_1, transformer, shuffle=False, algorithm=algorithm_name)
-    result = evaluate_model(algorithm, filename, gym_env_train, "Training Env")
-    if result:
-        results.append(result)
-    
+    # Setup Output File
+    file_name = f'Evaluation_{time.strftime("%Y%m%d_%H%M%S")}_{ARCH_STR}_{ALGORITHM.__name__}.txt'
+    with open(file_name, 'a+') as data:
+        data.write(f'CybORG v{CYBORG_VERSION}, {scenario}\n')
+        data.write(f'Model: {MODEL_PATH}\n\n')
 
-# ========== SUMMARY ==========
-print(f"\n{'='*60}")
-print("SUMMARY")
-print(f"{'='*60}")
-for r in results:
-    print(f"{r['algorithm']:8} | {r['env']:15} | Mean: {r['mean']:7.2f} | Max: {r['max']:7.2f} | Min: {r['min']:7.2f}")
+    print(f'Starting official benchmark for {ARCH_STR}...\n')
+    
+    # Standard official CAGE loops
+    for num_steps in [30, 50, 100]:
+        for red_agent in [RedMeanderAgent, SleepAgent]:
+
+            # Re-initialize the raw and wrapped envs for the specific Red Agent
+            cyborg = create_cyborg_env(SCENARIO_PATH, red_agent)
+            wrapped_cyborg = wrap(cyborg, red_agent)
+            
+            # Since max_steps varies by loop, update the wrapper manually
+            wrapped_cyborg.max_steps = num_steps
+
+            total_reward = []
+            
+            for i in range(MAX_EPS):
+                r = []
+                
+                # Unlike SB3, we must handle the reset tuples manually here
+                reset_result = wrapped_cyborg.reset()
+                # Gymnasium usually returns (obs, info) on reset
+                observation = reset_result[0] if isinstance(reset_result, tuple) else reset_result
+
+                for j in range(num_steps):
+                    # Use the SB3 model predict function
+                    # deterministic=True is standard for evaluation
+                    action, _states = model.predict(observation, deterministic=True)
+
+                    if isinstance(action, np.ndarray):
+                        action = action.item()
+                    
+                    # Step the wrapper
+                    step_result = wrapped_cyborg.step(action)
+                    observation, rew, done, truncated, info = step_result
+                    
+                    r.append(rew)
+                    
+                    if done or truncated:
+                        break
+                        
+                total_reward.append(sum(r))
+
+            mean_r = mean(total_reward)
+            std_r = stdev(total_reward)
+            print(f'Steps: {num_steps:<3} | Agent: {red_agent.__name__:<15} | Mean: {mean_r:7.2f} | Std: {std_r:6.2f}')
+            
+            with open(file_name, 'a+') as data:
+                data.write(f'steps: {num_steps}, adversary: {red_agent.__name__}, mean: {mean_r}, standard deviation {std_r}\n')
