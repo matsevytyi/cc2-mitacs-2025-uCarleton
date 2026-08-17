@@ -17,7 +17,7 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 class TransformerStateEncoder(BaseFeaturesExtractor):
 
-    def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2, initial_host_count=0):
+    def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2, initial_host_count=0, mode='train'):
         super().__init__(observation_space, features_dim=embedding_dim)
 
         self.embedding_dim = embedding_dim*2 # 1, 2, 3, 4 depending on amount of features
@@ -49,6 +49,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         
         # deployment
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+
+        self.mode = mode
 
         # training
         self.token_head_from_cls = nn.Linear(self.embedding_dim, self.H * self.embedding_dim)
@@ -192,7 +194,8 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         self.obs_embed.load_state_dict(checkpoint['obs_embed'])
         self.ip_byte_embed.load_state_dict(checkpoint['ip_byte_embed'])
         self.cls_token = checkpoint['cls_token']
-        self.token_head_from_cls.load_state_dict(checkpoint['token_head_from_cls'])
+        if self.mode == 'train' or self.mode == 'tune':
+            self.token_head_from_cls.load_state_dict(checkpoint['token_head_from_cls'])
     
     # =================== HELPER METHODS ===================
     
