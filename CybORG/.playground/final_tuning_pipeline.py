@@ -8,26 +8,35 @@ from collections import deque
 
 from CybORG import CybORG
 from CybORG.Agents import RedMeanderAgent
-from CybORG.Agents.Wrappers import TransformerWrapper, PaddingWrapper
+from CybORG.Agents.Wrappers import TransformerWrapper, PaddingWrapper, DeepSetsPermInvWrapper
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.logger import configure
 
 # ========== CONFIGURATION ==========
 
-transformer = True
+ALGORITHM = PPO
 
-ALGORITHM = DQN
-algorithm_name = ALGORITHM.__name__
+mode = "transformer" # "transformer", "ds", or "padding"
+
+transformer = (mode == "transformer")
+deepset = (mode == "ds")
+pad = (mode == "padding")
+
+method = "TRAIN"
+
+#OLD_RUN_ID = f"{method}_{mode}_{ALGORITHM.__name__}_vs_RedMeander"
+
+OLD_RUN_ID = "TRAIN_transformer_PPO_vs_RedMeander"
+
 USE_PRETRAINED = True
-MODEL_PATH = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_training_for_dynamic"
 TOTAL_TIMESTEPS = 450_000
-RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_tuning_x150_extended_dynamic_topology"
+RUN_ID = f"NEW_HP_{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_tuning_x150_extended_dynamic_topology"
 TENSORBOARD_LOG = f"./logs/{RUN_ID}"
 
 device = 'cpu'
 
 base_dir = os.path.dirname(os.path.dirname(__file__))
-scenario_name = f"Scenario2_{'Transformer' if transformer else 'Padding'}_{algorithm_name}"
+scenario_name = f"Scenario2_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_{ALGORITHM.__name__}"
 SCENARIO_PATH = os.path.join(base_dir, f".playground/scenarios/{scenario_name}.yaml")
 
 HYPERPARAMS = {
@@ -51,14 +60,14 @@ HYPERPARAMS = {
         "verbose": 2,
         "tensorboard_log": f"./logs/{RUN_ID}",
         "device": device,
-        "learning_rate": 3e-4,
-        "n_steps": 2048,
+        "learning_rate": 5e-5,
+        "n_steps": 4096,
         "batch_size": 64,
         "n_epochs": 10,
         "gamma": 0.99,
         "gae_lambda": 0.95,
-        "clip_range": 0.2,
-        "ent_coef": 0.0,
+        "clip_range": 0.1,
+        "ent_coef": 0.01,
         "vf_coef": 0.5,
         "max_grad_norm": 0.5,
     },
@@ -103,7 +112,18 @@ if transformer:
         env_creator=create_cyborg_env,
         yaml_path=SCENARIO_PATH,
         max_actions=240,
-        weights_path=f"{MODEL_PATH}.encoder.pth"
+        weights_path=f"{OLD_RUN_ID}.encoder.pth"
+    )
+elif deepset:
+    gym_env = DeepSetsPermInvWrapper(
+        agent_name='Blue',
+        raw_cyborg=initial_raw_cyborg,
+        max_steps=100,
+        knowledge_update_mode="tune",
+        env_creator=create_cyborg_env,
+        yaml_path=SCENARIO_PATH,
+        max_actions=240,
+        weights_path=f"{OLD_RUN_ID}.encoder.pth"
     )
 else:
     gym_env = PaddingWrapper(
@@ -121,9 +141,9 @@ gym_env.reset()
 
 # Create model
 if USE_PRETRAINED:
-    model = ALGORITHM.load(MODEL_PATH, env=gym_env, tensorboard_log=TENSORBOARD_LOG)
+    model = ALGORITHM.load(OLD_RUN_ID, env=gym_env, tensorboard_log=TENSORBOARD_LOG)
 else:
-    hyperparams = HYPERPARAMS[algorithm_name]
+    hyperparams = HYPERPARAMS[ALGORITHM.__name__]
     model = ALGORITHM(env=gym_env, **hyperparams)
 
 # ========== MANUAL LOGGING FOR CONVERGENCE ANALYSIS ==========
@@ -143,7 +163,7 @@ episode_count = 0
 model.logger.record("rollout/ep_rew_mean", 0.0)
 model.logger.record("rollout/ep_len_mean", 0.0)
 if transformer:
-    model.logger.record("train/recon_loss", gym_env.transformer_encoder.recon_loss.item())
+    model.logger.record("train/recon_loss", gym_env.encoder.recon_loss.item())
 model.logger.dump(step=0)
 
 print(f"Starting training with DYNAMIC topology")
@@ -183,7 +203,7 @@ while total_steps < TOTAL_TIMESTEPS:
     
     # NEW: Log reconstruction loss for Transformer (convergence metric)
     if transformer:
-        recon_loss = gym_env.transformer_encoder.recon_loss
+        recon_loss = gym_env.encoder.recon_loss
         if isinstance(recon_loss, torch.Tensor):
             recon_loss = recon_loss.item()
         recon_losses.append(recon_loss)
@@ -213,8 +233,8 @@ out_name = f"{RUN_ID}"
 model.save(out_name)
 print(f"Saved model to {out_name}.zip")
 
-if transformer:
-    encoder = gym_env.transformer_encoder
+if transformer or deepset:
+    encoder = gym_env.encoder
     encoder.save_weights(out_name + ".encoder.pth")
     print(f"Encoder weights saved to: {out_name}.encoder.pth")
 

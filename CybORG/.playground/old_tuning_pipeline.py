@@ -1,5 +1,7 @@
 # ========== TRAINING PIPELINE (updated) ==========
 
+# OUTDATED – DO NOT USE
+
 import os, sys, inspect
 import numpy as np
 import torch
@@ -7,20 +9,23 @@ import random
 
 from CybORG import CybORG
 from CybORG.Agents import RedMeanderAgent
-from CybORG.Agents.Wrappers import TransformerWrapper, PaddingWrapper
+from CybORG.Agents.Wrappers import TransformerWrapper, PaddingWrapper, DeepSetsPermInvWrapper
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.logger import configure
 
 # ========== CONFIGURATION ==========
 
-transformer = False
+mode = "ds"
+transformer = mode == "transformer"
+deepset = mode == "ds"
+pad = mode == "padding"
 
 ALGORITHM = DQN
 algorithm_name = ALGORITHM.__name__
 USE_PRETRAINED = True
-MODEL_PATH = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_training_for_dynamic"
+MODEL_PATH = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_training_for_dynamic"
 TOTAL_TIMESTEPS = 100_000 if USE_PRETRAINED else 500_000
-RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_tuning_x10_dynamic_topology"
+RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_tuning_x10_dynamic_topology"
 #RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding'}_training_for_dynamic"
 TENSORBOARD_LOG = "./logs/"
 
@@ -94,6 +99,17 @@ if transformer:
         max_actions=240,       
         weights_path=f"{MODEL_PATH}.encoder.pth"
     )
+elif deepset:
+    gym_env = DeepSetsPermInvWrapper(
+        agent_name='Blue',
+        raw_cyborg=initial_raw_cyborg,
+        max_steps=100,
+        knowledge_update_mode="tune",
+        env_creator=create_cyborg_env,  # NEW: Pass function reference
+        yaml_path=SCENARIO_PATH,  
+        max_actions=240,       
+        weights_path=f"{MODEL_PATH}.encoder.pth"
+    )
 else:
     gym_env = PaddingWrapper(
         agent_name='Blue',
@@ -131,6 +147,6 @@ model.save(out_name)
 print(f"Saved model to {out_name}.zip")
 
 if transformer:
-    encoder = gym_env.transformer_encoder  # or gym_env.transformer_encoder or similar
+    encoder = gym_env.encoder  # or gym_env.encoder or similar
     encoder.save_weights(out_name + ".encoder.pth")
     print(f"Encoder weights saved to: {out_name}.encoder.pth")
