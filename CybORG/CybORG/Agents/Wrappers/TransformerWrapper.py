@@ -10,6 +10,7 @@ from datetime import datetime
 
 
 from CybORG.Agents.Wrappers.TransformerStateEncoder import TransformerStateEncoder
+from CybORG.Agents.Wrappers.TransformerStateEncoderV2 import TransformerStateEncoderV2
 
 import os, sys
 
@@ -73,10 +74,11 @@ class TransformerWrapper(Env,BaseWrapper):
             dtype=np.float32
         )
 
-        self.transformer_encoder = TransformerStateEncoder(
+        self.encoder = TransformerStateEncoderV2(
             observation_space=self.observation_space,
             embedding_dim=embedding_dim,
-            initial_host_count=len(self.host_order)
+            initial_host_count=len(self.host_order),
+            mode=self.knowledge_update_mode
         ).to(self.device)
         
 
@@ -92,13 +94,13 @@ class TransformerWrapper(Env,BaseWrapper):
         self.episode_lengths_list = []
 
         if weights_path:
-            self.transformer_encoder.load_weights(weights_path)
+            self.encoder.load_weights(weights_path)
 
 
     def step(self,action=None, debug=False, verbose=False):
 
         self.action_history.append(self.decode_action(action)[1])
-        self.recon_loss_history.append(self.transformer_encoder.recon_loss.item())
+        self.recon_loss_history.append(self.encoder.recon_loss.item())
         
         # Map out-of-range actions to a valid one based on the selected mode
         if action is not None:
@@ -132,8 +134,8 @@ class TransformerWrapper(Env,BaseWrapper):
             truncated = True
         
         # with torch.no_grad():
-        #     encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
-        encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
+        #     encoded_obs = self.encoder(obs, self.host_order, version=self.version)
+        encoded_obs = self.encoder(obs, self.host_order, version=self.version)
 
         return encoded_obs.detach().cpu().numpy(), reward, terminated, truncated, info
 
@@ -155,8 +157,8 @@ class TransformerWrapper(Env,BaseWrapper):
         obs = self.extract_host_state(raw_cyborg=self.env.env.env.env.env, obs=obs)
 
         # with torch.no_grad():
-        #     encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
-        encoded_obs = self.transformer_encoder(obs, self.host_order, version=self.version)
+        #     encoded_obs = self.encoder(obs, self.host_order, version=self.version)
+        encoded_obs = self.encoder(obs, self.host_order, version=self.version)
 
         ## update csv with actions from self.action_history and set self.action_history to []
         if self.action_history:
@@ -165,7 +167,7 @@ class TransformerWrapper(Env,BaseWrapper):
             os.makedirs(csv_dir, exist_ok=True)
 
             # File unique per agent_name (or add timestamp if you want)
-            csv_path = os.path.join(csv_dir, f"actions_{self.agent_name}_HOTRELOAD_x150_extended_Tuning_Transformer_RedMeander_DQN.csv")
+            csv_path = os.path.join(csv_dir, f"actions_V2_{self.agent_name}_HOTRELOAD_x150_extended_Tuning_Transformer_RedMeander_PPO.csv")
 
             # Append mode is safe (creates file if not exists)
             with open(csv_path, mode='a', newline='') as csvfile:
@@ -229,20 +231,21 @@ class TransformerWrapper(Env,BaseWrapper):
 
         # dump dynamically old weights
         old_weights = {
-            'transformer': self.transformer_encoder.transformer.state_dict(),
-            'obs_embed': self.transformer_encoder.obs_embed.state_dict(),
-            'ip_byte_embed': self.transformer_encoder.ip_byte_embed.state_dict(),
-            'cls_token': self.transformer_encoder.cls_token.data,
+            'transformer': self.encoder.transformer.state_dict(),
+            'obs_embed': self.encoder.obs_embed.state_dict(),
+            'ip_byte_embed': self.encoder.ip_byte_embed.state_dict(),
+            'cls_token': self.encoder.cls_token.data,
         }
         
         # Reinitialize encoder with new host count
-        self.transformer_encoder = TransformerStateEncoder(
+        self.encoder = TransformerStateEncoderV2(
             observation_space=self.observation_space,
             embedding_dim=64,
-            initial_host_count=len(self.host_order)
+            initial_host_count=len(self.host_order),
+            mode=self.knowledge_update_mode
         ).to(self.device)
 
-        self.transformer_encoder.load_weights_from_dict(old_weights)
+        self.encoder.load_weights_from_dict(old_weights)
         
         return True
         # except Exception as e:
