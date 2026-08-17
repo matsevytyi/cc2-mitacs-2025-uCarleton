@@ -8,4 +8,7 @@ from .EnumActionWrapper import EnumActionWrapper
 from .ChallengeWrapper import ChallengeWrapper
 from .ReduceActionSpaceWrapper import ReduceActionSpaceWrapper
 from .TransformerWrapper import TransformerWrapper
-from .CutoffWrapper import PaddingWrapper
+from .PaddingWrapper import PaddingWrapper
+from .GNNWrappers import DeepSetsWrapper, GATWrapper
+from .DeepSetsPermInvWrapper import DeepSetsPermInvWrapper
+from TransformerStateEncoderV2 import TransformerStateEncoderV2
