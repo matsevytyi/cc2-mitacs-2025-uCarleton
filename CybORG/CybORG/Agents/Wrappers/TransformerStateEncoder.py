@@ -15,7 +15,7 @@ from CybORG.Shared.Enums import ProcessName
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 
-class TransformerStateEncoder(BaseFeaturesExtractor):
+class TransformerStateEncoderV2(BaseFeaturesExtractor):
 
     def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2, initial_host_count=0, mode='train'):
         super().__init__(observation_space, features_dim=embedding_dim)
@@ -44,7 +44,10 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.embedding_dim,
             nhead=n_heads,
-            batch_first=True
+            batch_first=True,
+            norm_first=True,  # Crucial for stability 
+            activation="gelu",
+            dropout=0.1
         )
         
         # deployment
@@ -84,6 +87,9 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
             eta_min=5e-7
         )
         
+        if hasattr(F, 'scaled_dot_product_attention'):
+            print("Succesfully using PyTorch 2.0+ Scaled Dot Product Attention (FlashAttention compatible)!")
+        
     # =================== MAIN METHODS ===================
 
     def forward(self, obs: dict, host_order, version="ip_local", mode="train"):
@@ -102,11 +108,18 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         
         # Apply sinusoidal positional encoding after feature encoding (as per diagram)
         seq_len = host_tokens.size(1)
-        pos_encoding = self.sinusoidal_positional_encoding(
+        
+        # pos_encoding = self.sinusoidal_positional_encoding(
+        #     seq_len, 
+        #     self.embedding_dim, 
+        #     device=host_tokens.device
+        # )
+        
+        pos_encoding = self.get_positional_encoding(
             seq_len, 
-            self.embedding_dim, 
             device=host_tokens.device
         )
+        
         host_tokens = host_tokens + pos_encoding  # Add positional encoding
         
         # CLS token
@@ -289,6 +302,42 @@ class TransformerStateEncoder(BaseFeaturesExtractor):
         pe[:, 0::2] = torch.sin(angle_rads[:, 0::2])
         pe[:, 1::2] = torch.cos(angle_rads[:, 1::2])
         return pe.unsqueeze(0)  # [1, seq_len, dim]
+    
+    def get_positional_encoding(self, seq_len, device):
+        # If we haven't created it yet, or the new sequence is longer than our cache
+        if not hasattr(self, 'pe_cache') or self.pe_cache.size(1) < seq_len:
+            # Create a buffer slightly larger than needed to avoid frequent resizing
+            # e.g., round up to nearest 100
+            alloc_len = ((seq_len // 100) + 1) * 100
+            
+            # Generate your encoding (your existing logic)
+            pos = torch.arange(alloc_len, dtype=torch.float, device=device).unsqueeze(1)
+            i = torch.arange(self.embedding_dim, dtype=torch.float, device=device).unsqueeze(0)
+            angle_rates = 1 / (10000 ** (2 * (i // 2) / self.embedding_dim))
+            angle_rads = pos * angle_rates
+            pe = torch.zeros(alloc_len, self.embedding_dim, device=device)
+            pe[:, 0::2] = torch.sin(angle_rads[:, 0::2])
+            pe[:, 1::2] = torch.cos(angle_rads[:, 1::2])
+            
+            # Save it as a buffer so it moves with .to(device) automatically
+            self.register_buffer('pe_cache', pe.unsqueeze(0), persistent=False)
+            
+        # Return the slice we need
+        return self.pe_cache[:, :seq_len, :]
+
+    def _init_weights(self):
+        # 1. Initialize embeddings with very small weights so unseen categorical 
+        # features (like a new port) don't inject massive random noise into the state
+        nn.init.normal_(self.port_embed.weight, std=0.01)
+        
+        # 2. Keep the CLS token small
+        nn.init.normal_(self.cls_token, std=0.01)
+        
+        # 3. Orthogonal initialization for the observation linear layer 
+        # (Standard best-practice for Stable Baselines3 RL features)
+        nn.init.orthogonal_(self.obs_embed.weight, gain=np.sqrt(2))
+        nn.init.constant_(self.obs_embed.bias, 0.0)
+
 
     def port_to_index(self, port:int) -> int:
         """Hash a port into embedding table index."""

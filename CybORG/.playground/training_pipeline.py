@@ -15,9 +15,9 @@ from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 
 # ========== CONFIGURATION ==========
-ALGORITHM = PPO  # Change this to DQN, PPO, etc.
+ALGORITHM = DQN  # Change this to DQN, PPO, etc.
 
-mode = "transformer" # "transformer", "ds", or "padding"
+mode = "ds" # "transformer", "ds", or "padding"
 
 transformer = (mode == "transformer")
 deepset = (mode == "ds")

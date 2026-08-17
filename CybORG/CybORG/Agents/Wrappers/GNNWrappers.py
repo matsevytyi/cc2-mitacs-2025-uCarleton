@@ -25,9 +25,6 @@ class BaseStateEncoder(nn.Module):
 
     def load_weights_from_dict(self, state_dict):
         self.load_state_dict(state_dict)
-        
-    def save_weights(self, path):
-        torch.save(self.state_dict(), path)
 
 class GATEncoderModel(BaseStateEncoder):
     def __init__(self, observation_space, embedding_dim=64, n_heads=4):

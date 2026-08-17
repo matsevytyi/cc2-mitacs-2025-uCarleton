@@ -14,9 +14,9 @@ from stable_baselines3.common.logger import configure
 
 # ========== CONFIGURATION ==========
 
-ALGORITHM = PPO
+ALGORITHM = DQN
 
-mode = "transformer" # "transformer", "ds", or "padding"
+mode = "ds" # "transformer", "ds", or "padding"
 
 transformer = (mode == "transformer")
 deepset = (mode == "ds")
@@ -24,13 +24,11 @@ pad = (mode == "padding")
 
 method = "TRAIN"
 
-#OLD_RUN_ID = f"{method}_{mode}_{ALGORITHM.__name__}_vs_RedMeander"
-
-OLD_RUN_ID = "TRAIN_transformer_PPO_vs_RedMeander"
+OLD_RUN_ID = f"{method}_{mode}_{ALGORITHM.__name__}_vs_RedMeander"
 
 USE_PRETRAINED = True
 TOTAL_TIMESTEPS = 450_000
-RUN_ID = f"NEW_HP_{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_tuning_x150_extended_dynamic_topology"
+RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_tuning_x150_extended_dynamic_topology"
 TENSORBOARD_LOG = f"./logs/{RUN_ID}"
 
 device = 'cpu'
