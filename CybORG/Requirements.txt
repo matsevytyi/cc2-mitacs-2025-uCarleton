@@ -3,5 +3,8 @@ paramiko
 pyyaml
 numpy
 gym
+gymnasium
+torch
+stable-baselines3
 prettytable
 docutils

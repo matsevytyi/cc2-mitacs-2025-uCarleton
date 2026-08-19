@@ -378,6 +378,52 @@ Our aim is to support the development of AI tactics, techniques and procedures w
 
 Our focus, which is rare in this area, is on the development of defensive cyber agents\. Rather than focusing on the detection of an attacker based on data, CybORG aims to develop the higher\-level strategies required to effectively respond to an attacker across an entire network\. Therefore, the defensive agents in CybORG select from a set of high\-level actions including the analysis of hosts, creation of decoy services, removal of malicious code and restoring of systems from backup\. For the purposes of the challenge, some red agents are provided for the defensive agents to train and be tested against\. 
 
+## Reproduction notes for the paper / training pipeline
+
+The paper-specific training work in this repository is not in the base CybORG package alone; it is implemented in the experiment scripts under [CybORG/.playground](CybORG/.playground). These are the scripts that are most relevant to understanding the paper implementation:
+
+- [CybORG/.playground/training_pipeline.py](CybORG/.playground/training_pipeline.py): minimal training entry point for a transformer / DeepSets / padding baseline.
+- [CybORG/.playground/final_tuning_pipeline.py](CybORG/.playground/final_tuning_pipeline.py): the final dynamic-topology tuning loop used for the paper experiments; this is the most complete version and the one to read for the final methodology.
+- [CybORG/scenario_shuffler.py](CybORG/scenario_shuffler.py): topology-changing helper used to regenerate scenarios during dynamic tuning.
+- [/CybORG/.playground/speed_evaluation.py](/CybORG/.playground/speed_evaluation.py): topology-changing helper used to regenerate scenarios during dynamic tuning.
+
+Implementation of baselines:
+
+- [CybORG/CybORG/Agents/Wrappers/TransformerWrapper.py](CybORG/CybORG/Agents/Wrappers/TransformerWrapper.py): the environment wrapper that converts raw CybORG observations into encoded observations for the RL agent.
+- [CybORG/CybORG/Agents/Wrappers/TransformerStateEncoderV2.py](CybORG/CybORG/Agents/Wrappers/TransformerStateEncoderV2.py): the actual transformer encoder used in the paper’s final pipeline.
+- [CybORG/CybORG/Agents/Wrappers/DeepSetsPermInvWrapper.py](CybORG/CybORG/Agents/Wrappers/DeepSetsPermInvWrapper.py): permutation-invariant DeepSets baseline used as a comparison method.
+- [CybORG/CybORG/Agents/Wrappers/GNNWrappers.py](CybORG/CybORG/Agents/Wrappers/DeepSetsPermInvWrapper.py): GNN baseline used as a comparison method.
+- [CybORG/CybORG/Agents/Wrappers/PaddingWrapper.py](CybORG/CybORG/Agents/Wrappers/PaddingWrapper.py): simpler fixed-size baseline.
+
+
+### Reproduction requirements
+
+To reproduce the paper training and evaluation within CAGE Challenge 2, the environment needs more than the base CybORG install. The actual training code imports `torch`, `stable_baselines3`, and `gymnasium` in addition to the standard CybORG packages. The dependency list in [CybORG/Requirements.txt](CybORG/Requirements.txt) should therefore include at least:
+
+- `torch`
+- `stable-baselines3`
+- `gymnasium`
+- `gym`
+- `numpy`
+- `pyyaml`
+- `paramiko`
+- `prettytable`
+- `docutils`
+
+This is the minimum practical set for reproducing the RL-based training and evaluation workflow used in the paper.
+
+### What was actually implemented in the paper code
+
+The paper code follows a standard RL pipeline:
+
+1. Create a CybORG scenario with a chosen red agent, `RedMeanderAgent` or `RedBLineAgent`. For varying network topology only `RedMeanderAgent` is used.
+2. Wrap the raw environment with a state encoder wrapper (`TransformerWrapper`, `DeepSetsPermInvWrapper`, or `PaddingWrapper`).
+3. Encode the host-level observation into a compact latent representation (done inside TransformerWrapper).
+4. Train a Stable Baselines 3 model (`DQN` or `PPO`) against the wrapped environment – run `training_pipeline`.
+5. Run `tuning_pipeline` to train in variable network – periodically reload the environment and shuffle the scenario topology while retaining encoder weights, which simulates dynamic-network conditions.
+6. Save the trained model and encoder weights for later evaluation.
+7. Use tensorboard or `process_tensorboard_IEEE.py` to visualise results.
+
 # Scenario narrative
 
 “There is an ongoing rivalry between neighbouring nations Guilder and Florin\. During a period of increasing tension between the two nations, Florin is receiving a significant increase of phishing attacks\. These attacks seem to be specifically targeted at factories manufacturing equipment for the Florin military\.
