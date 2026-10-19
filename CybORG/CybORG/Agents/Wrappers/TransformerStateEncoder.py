@@ -17,8 +17,26 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 class TransformerStateEncoderV2(BaseFeaturesExtractor):
 
-    def __init__(self, observation_space: gym.spaces.Box, embedding_dim=64, n_heads=4, n_layers=2, initial_host_count=0, mode='train'):
-        super().__init__(observation_space, features_dim=embedding_dim)
+    def __init__(
+        self,
+        observation_space: gym.spaces.Box,
+        embedding_dim=64,
+        n_heads=4,
+        n_layers=2,
+        initial_host_count=0,
+        mode='train',
+        top_k=8,
+        focus_mode='stateful',
+        use_candidate_retrieval=True
+    ):
+        self.top_k = top_k
+        self.focus_mode = focus_mode  # 'stateful' (tracks last acted host) or 'salience' (tracks #1 anomaly)
+        self.use_candidate_retrieval = use_candidate_retrieval
+
+        total_embed_dim = embedding_dim * 2
+        out_features_dim = (1 + top_k) * total_embed_dim if use_candidate_retrieval else total_embed_dim
+
+        super().__init__(observation_space, features_dim=out_features_dim)
 
         self.embedding_dim = embedding_dim*2 # 1, 2, 3, 4 depending on amount of features
 
@@ -41,6 +59,11 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
 
         self.H = initial_host_count
 
+        # Focus host and candidate slot tracking for dynamic action wrapper
+        self.focus_host = None
+        self.current_candidate_hosts = []
+        self.last_cls_output = None
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.embedding_dim,
             nhead=n_heads,
@@ -55,8 +78,11 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
 
         self.mode = mode
 
-        # training
-        self.token_head_from_cls = nn.Linear(self.embedding_dim, self.H * self.embedding_dim)
+        # training: Bilinear / Hadamard IP-Query Reconstruction Head (invariant to dynamic self.H)
+        self.token_head_from_cls = nn.ModuleDict({
+            'ip_query_proj': nn.Linear(self.embedding_dim // 2, self.embedding_dim),
+            'status_recon_head': nn.Linear(self.embedding_dim, self.embedding_dim // 2)
+        })
 
         self.recon_criterion = nn.MSELoss()
 
@@ -104,6 +130,7 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
         
         batch_size = 1 # CC2 step default
         
+        active_host_order = [name for name in host_order if name in obs]
         host_tokens = self.encode_features_perhost(obs, host_order, batch_size, version=version)
         
         # Apply sinusoidal positional encoding after feature encoding (as per diagram)
@@ -115,12 +142,13 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
         #     device=host_tokens.device
         # )
         
-        pos_encoding = self.get_positional_encoding(
-            seq_len, 
-            device=host_tokens.device
-        )
+        # removed since we can use IP embedding to identify devices
+        # pos_encoding = self.get_positional_encoding(
+        #     seq_len, 
+        #     device=host_tokens.device
+        # )
         
-        host_tokens = host_tokens + pos_encoding  # Add positional encoding
+        # host_tokens = host_tokens + pos_encoding  # Add positional encoding
         
         # CLS token
         cls_token = self.cls_token.expand(batch_size, -1, -1)  # [1, 1, D_total]
@@ -134,12 +162,21 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
 
         # Take CLS output
         cls_output = encoded[:, 0, :]  # (batch, D)
+        encoded_host_tokens = encoded[:, 1:, :] # (batch, num_hosts, D)
+        self.last_cls_output = cls_output
         
         if mode == "train": 
-            reconstruction = self.token_head_from_cls(cls_output) #(batch, seq_length)
-            reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
+            # Split host_tokens into 64D status targets (obs_chunks) and 64D IP queries (ip_chunks)
+            half_dim = self.embedding_dim // 2
+            status_targets = host_tokens[:, :, :half_dim]  # [batch, H, D // 2]
+            ip_queries = host_tokens[:, :, half_dim:]      # [batch, H, D // 2]
 
-            recon_loss = self.recon_criterion(reconstruction, host_tokens)
+            # Query Rep_<CLS> with each host's IP embedding via Hadamard product
+            ip_filter = self.token_head_from_cls['ip_query_proj'](ip_queries)           # [batch, H, D]
+            queried_cls = cls_output.unsqueeze(1) * ip_filter                           # [batch, H, D]
+            reconstruction = self.token_head_from_cls['status_recon_head'](queried_cls) # [batch, H, D // 2]
+
+            recon_loss = self.recon_criterion(reconstruction, status_targets.detach())
             self.recon_loss = recon_loss
 
             # Weighted backward propagation
@@ -158,7 +195,126 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
             
             self.error_threshold = 0.9 * self.error_threshold + 0.1 * recon_loss.item()
 
-        return cls_output
+        if self.use_candidate_retrieval:
+            rl_state, self.current_candidate_hosts = self.retrieve_candidates(
+                cls_output=cls_output,
+                host_tokens=host_tokens,
+                encoded_host_tokens=encoded_host_tokens,
+                active_host_order=active_host_order
+            )
+            return rl_state, encoded_host_tokens
+
+        return cls_output, encoded_host_tokens
+
+    # =================== CANDIDATE RETRIEVAL & ACTION DECODING ===================
+
+    def retrieve_candidates(self, cls_output, host_tokens, encoded_host_tokens, active_host_order):
+        """
+        Selects K candidate hosts without learned decision weights:
+          - Slots 0 .. K/2 - 1: Top Salience hosts (Status deviation + <CLS> similarity)
+          - Slots K/2 .. K - 1: Strided IP Distance Quantiles from focus_host
+        Returns:
+          - rl_state: [batch_size, (1 + K) * embedding_dim]
+          - candidate_host_names: list of K host names corresponding to Slots 0 .. K-1
+        """
+        batch_size = cls_output.size(0)
+        num_hosts = len(active_host_order)
+        half_dim = self.embedding_dim // 2
+
+        with torch.no_grad():
+            ip_chunks = host_tokens[:, :, half_dim:]  # [1, H, 64]
+            enc_hosts = encoded_host_tokens[0]        # [H, 128]
+            cls_vec = cls_output[0].unsqueeze(0)      # [1, 128]
+
+            # 1. Compute Salience Score: L2 distance from mean host token + Cosine similarity to <CLS>
+            mean_token = enc_hosts.mean(dim=0, keepdim=True)                    # [1, 128]
+            token_dev = torch.norm(enc_hosts - mean_token, p=2, dim=-1)         # [H]
+            cls_sim = F.cosine_similarity(enc_hosts, cls_vec, dim=-1)           # [H]
+            salience_scores = token_dev + cls_sim                               # [H]
+
+            k_salience = min(self.top_k // 2, num_hosts)
+            salience_indices = torch.topk(salience_scores, k=k_salience, largest=True).indices.tolist()
+
+            # 2. Resolve focus_host index
+            if self.focus_mode == 'salience':
+                focus_idx = salience_indices[0]
+                self.focus_host = active_host_order[focus_idx]
+            else:
+                # Stateful mode: use current focus_host if valid, otherwise initialize to IP Medoid
+                if self.focus_host is not None and self.focus_host in active_host_order:
+                    focus_idx = active_host_order.index(self.focus_host)
+                else:
+                    ip_vecs = ip_chunks[0]                                      # [H, 64]
+                    ip_mean = ip_vecs.mean(dim=0, keepdim=True)                 # [1, 64]
+                    medoid_dists = torch.norm(ip_vecs - ip_mean, p=2, dim=-1)   # [H]
+                    focus_idx = int(torch.argmin(medoid_dists).item())
+                    self.focus_host = active_host_order[focus_idx]
+
+            # 3. Select remaining K - k_salience slots via IP Distance Quantiles from focus_host
+            k_quantile = self.top_k - len(salience_indices)
+            salience_set = set(salience_indices)
+            remaining_indices = [i for i in range(num_hosts) if i not in salience_set]
+
+            quantile_indices = []
+            if k_quantile > 0 and len(remaining_indices) > 0:
+                rem_tensor = torch.tensor(remaining_indices, dtype=torch.long, device=ip_chunks.device)
+                focus_ip = ip_chunks[0, focus_idx].unsqueeze(0)                 # [1, 64]
+                rem_ips = ip_chunks[0, rem_tensor]                              # [R, 64]
+                ip_dists = torch.norm(rem_ips - focus_ip, p=2, dim=-1)          # [R]
+
+                sorted_rem_order = torch.argsort(ip_dists, descending=False)
+                sorted_rem_indices = rem_tensor[sorted_rem_order]
+
+                if len(sorted_rem_indices) >= k_quantile:
+                    q_positions = torch.linspace(
+                        0, len(sorted_rem_indices) - 1, steps=k_quantile, device=ip_chunks.device
+                    ).round().long()
+                    quantile_indices = sorted_rem_indices[q_positions].tolist()
+                else:
+                    quantile_indices = sorted_rem_indices.tolist()
+
+            candidate_indices = salience_indices + quantile_indices
+
+            # Pad with focus_idx if total active hosts H < top_k
+            while len(candidate_indices) < self.top_k:
+                candidate_indices.append(focus_idx)
+
+            candidate_idx_tensor = torch.tensor(
+                candidate_indices[:self.top_k], dtype=torch.long, device=encoded_host_tokens.device
+            )
+
+        # Concatenate Rep_<CLS> with the K selected encoded_host_tokens (preserves gradients if needed)
+        selected_host_tokens = encoded_host_tokens[:, candidate_idx_tensor, :]  # [B, K, D]
+        flattened_slots = selected_host_tokens.reshape(batch_size, self.top_k * self.embedding_dim)
+        rl_state = torch.cat([cls_output, flattened_slots], dim=-1)             # [B, (1 + K) * D]
+
+        candidate_host_names = [active_host_order[i] for i in candidate_indices[:self.top_k]]
+        return rl_state, candidate_host_names
+
+    def decode_action(self, action: int, num_host_actions: int = 12):
+        """
+        Maps an integer action from Discrete(1 + top_k * num_host_actions) to CybORG:
+          - action == 0 -> ('Sleep', None, None)
+          - action >= 1 -> ('HostAction', target_host_name, tool_idx) and updates focus_host
+        """
+        action = int(action)
+        if action == 0 or len(self.current_candidate_hosts) == 0:
+            return "Sleep", None, None
+
+        slot_idx = (action - 1) // num_host_actions
+        tool_idx = (action - 1) % num_host_actions
+        slot_idx = min(max(slot_idx, 0), len(self.current_candidate_hosts) - 1)
+
+        target_host = self.current_candidate_hosts[slot_idx]
+        if self.focus_mode == 'stateful':
+            self.focus_host = target_host
+
+        return "HostAction", target_host, tool_idx
+
+    def reset_focus(self):
+        """Call inside Wrapper.reset() to re-initialize focus_host on episode reset."""
+        self.focus_host = None
+        self.current_candidate_hosts = []
     
     def save_weights(self, path):
         """Save only the encoder weights"""
@@ -196,6 +352,12 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
             self.cls_token.data.copy_(cls_data)
         except Exception as e:
             print(f"Warning: cls_token failed: {e}")
+
+        if 'token_head_from_cls' in weights_dict:
+            try:
+                self.token_head_from_cls.load_state_dict(weights_dict['token_head_from_cls'])
+            except Exception as e:
+                print(f"Warning: token_head_from_cls failed: {e}")
         
 
 
