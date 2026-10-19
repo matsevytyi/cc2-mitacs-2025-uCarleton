@@ -17,7 +17,10 @@ from stable_baselines3.common.monitor import Monitor
 # ========== CONFIGURATION ==========
 ALGORITHM = DQN  # Change this to DQN, PPO, etc.
 
-mode = "ds" # "transformer", "ds", or "padding"
+mode = "transformer" # "transformer", "ds", or "padding"
+action_space_mode = "topk" # "topk", "pad", or "cutoff"
+top_k = 8
+focus_mode = "stateful" # "stateful" or "salience"
 
 transformer = (mode == "transformer")
 deepset = (mode == "ds")
@@ -25,7 +28,8 @@ pad = (mode == "padding")
 
 method = "TRAIN"
 
-RUN_ID = f"{method}_{mode}_{ALGORITHM.__name__}_vs_RedMeander"
+action_tag = f"_{action_space_mode}_k{top_k}_{focus_mode}" if (transformer and action_space_mode == "topk") else f"_{action_space_mode}" if transformer else ""
+RUN_ID = f"{method}_{mode}{action_tag}_{ALGORITHM.__name__}_vs_RedMeander"
 extended = True
 
 TOTAL_TIMESTEPS = 500_000
@@ -81,7 +85,16 @@ cyborg = CybORG(path, 'sim', agents={'Red': RedMeanderAgent})
 cyborg.reset()
 
 if transformer:
-    gym_env = TransformerWrapper(raw_cyborg=cyborg, agent_name='Blue', max_steps=100, device=device, max_actions=240)
+    gym_env = TransformerWrapper(
+        raw_cyborg=cyborg,
+        agent_name='Blue',
+        max_steps=100,
+        device=device,
+        action_space_mode=action_space_mode,
+        max_actions=None if action_space_mode == "topk" else 240,
+        top_k=top_k
+    )
+    gym_env.encoder.focus_mode = focus_mode
 elif pad:
     gym_env = PaddingWrapper(env=cyborg, agent_name='Blue', max_devices=100, max_steps=100)
 elif deepset:
@@ -116,4 +129,3 @@ if transformer or deepset:
     encoder = gym_env.encoder  # or gym_env.transformer_encoder or similar
     encoder.save_weights(RUN_ID + ".encoder.pth")
     print(f"Encoder weights saved to: {RUN_ID}.encoder.pth")
-

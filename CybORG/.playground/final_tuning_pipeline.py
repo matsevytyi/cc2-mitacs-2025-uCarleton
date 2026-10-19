@@ -16,7 +16,10 @@ from stable_baselines3.common.logger import configure
 
 ALGORITHM = DQN
 
-mode = "ds" # "transformer", "ds", or "padding"
+mode = "transformer" # "transformer", "ds", or "padding"
+action_space_mode = "topk" # "topk", "pad", or "cutoff"
+top_k = 8
+focus_mode = "stateful" # "stateful" or "salience"
 
 transformer = (mode == "transformer")
 deepset = (mode == "ds")
@@ -24,11 +27,13 @@ pad = (mode == "padding")
 
 method = "TRAIN"
 
-OLD_RUN_ID = f"{method}_{mode}_{ALGORITHM.__name__}_vs_RedMeander"
+action_tag = f"_{action_space_mode}_k{top_k}_{focus_mode}" if (transformer and action_space_mode == "topk") else f"_{action_space_mode}" if transformer else ""
+OLD_RUN_ID = f"{method}_{mode}{action_tag}_{ALGORITHM.__name__}_vs_RedMeander"
 
 USE_PRETRAINED = True
 TOTAL_TIMESTEPS = 450_000
-RUN_ID = f"{ALGORITHM.__name__}_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_tuning_x150_extended_dynamic_topology"
+model_label = f"Transformer{action_tag}" if transformer else "Padding" if pad else "DeepSets"
+RUN_ID = f"{ALGORITHM.__name__}_{model_label}_tuning_x150_extended_dynamic_topology"
 TENSORBOARD_LOG = f"./logs/{RUN_ID}"
 
 device = 'cpu'
@@ -106,12 +111,15 @@ if transformer:
         agent_name='Blue',
         raw_cyborg=initial_raw_cyborg,
         max_steps=100,
+        action_space_mode=action_space_mode,
         knowledge_update_mode="tune",
         env_creator=create_cyborg_env,
         yaml_path=SCENARIO_PATH,
-        max_actions=240,
-        weights_path=f"{OLD_RUN_ID}.encoder.pth"
+        max_actions=None if action_space_mode == "topk" else 240,
+        weights_path=f"{OLD_RUN_ID}.encoder.pth",
+        top_k=top_k
     )
+    gym_env.encoder.focus_mode = focus_mode
 elif deepset:
     gym_env = DeepSetsPermInvWrapper(
         agent_name='Blue',
@@ -131,7 +139,7 @@ else:
         knowledge_update_mode="tune",
         env_creator=create_cyborg_env,
         yaml_path=SCENARIO_PATH,
-    )
+        )
 
 if USE_PRETRAINED:
     gym_env._reload_environment()
@@ -161,7 +169,8 @@ episode_count = 0
 model.logger.record("rollout/ep_rew_mean", 0.0)
 model.logger.record("rollout/ep_len_mean", 0.0)
 if transformer:
-    model.logger.record("train/recon_loss", gym_env.encoder.recon_loss.item())
+    init_recon = gym_env.encoder.recon_loss
+    model.logger.record("train/recon_loss", init_recon.item() if isinstance(init_recon, torch.Tensor) else float(init_recon))
 model.logger.dump(step=0)
 
 print(f"Starting training with DYNAMIC topology")
