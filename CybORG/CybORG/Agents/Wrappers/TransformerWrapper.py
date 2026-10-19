@@ -8,7 +8,6 @@ import numpy as np
 import csv
 from datetime import datetime
 
-from CybORG.Agents.Wrappers.TransformerStateEncoder import TransformerStateEncoder
 from CybORG.Agents.Wrappers.TransformerStateEncoder import TransformerStateEncoderV2
 
 import os, sys

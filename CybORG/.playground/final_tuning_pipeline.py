@@ -1,10 +1,11 @@
-# ========== TRAINING PIPELINE (updated) ==========
-
 import os, sys, inspect
 import numpy as np
 import torch
 import random
 from collections import deque
+
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from CybORG import CybORG
 from CybORG.Agents import RedMeanderAgent

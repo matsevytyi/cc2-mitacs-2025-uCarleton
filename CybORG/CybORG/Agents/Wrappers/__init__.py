@@ -11,4 +11,4 @@ from .TransformerWrapper import TransformerWrapper
 from .PaddingWrapper import PaddingWrapper
 from .GNNWrappers import DeepSetsWrapper, GATWrapper
 from .DeepSetsPermInvWrapper import DeepSetsPermInvWrapper
-from TransformerStateEncoderV2 import TransformerStateEncoderV2
+from TransformerStateEncoder import TransformerStateEncoderV2
