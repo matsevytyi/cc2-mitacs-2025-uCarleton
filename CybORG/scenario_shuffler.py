@@ -1,6 +1,8 @@
 import yaml
 import numpy as np
 import random
+import shutil
+from pathlib import Path
 
 """
 Developed by Andrii Matsevytyi
@@ -12,6 +14,15 @@ At the University of Carleton
 Created for testing performance of Transformer Encoder to get modified observation space 
 while preserving old action space compatibility
 """
+
+def copy_scenario_for_run(base_filepath, output_filepath):
+    """Create an isolated scenario YAML for one experiment from the base scenario."""
+    base_path = Path(base_filepath)
+    output_path = Path(output_filepath)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(base_path, output_path)
+    return output_path
+
 
 def churn_hosts(filepath):
 
@@ -226,4 +237,3 @@ def update_yaml_file(filepath, mode='shuffle', new_assignments=None, seed=None):
 #     'User': ['Op_Host0', 'User3', 'User1', 'Defender', 'User2']
 # }
 # update_yaml_file(yaml_path, mode='assign', new_assignments=new_assignments)
-

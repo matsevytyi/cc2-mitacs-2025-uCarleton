@@ -11,6 +11,7 @@ import torch
 from CybORG import CybORG
 from CybORG.Agents import B_lineAgent, RedMeanderAgent
 from CybORG.Agents.Wrappers import DeepSetsPermInvWrapper, TransformerWrapper, ChallengeWrapper, PaddingWrapper
+from scenario_shuffler import copy_scenario_for_run
 
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.logger import configure
@@ -38,6 +39,11 @@ def add_pipeline_arguments(parser):
     parser.add_argument("--n_layers", type=int, choices=(1, 2, 4), default=2)
     parser.add_argument("--n_heads", type=int, default=4)
     parser.add_argument("--embedding_dim", type=int, choices=(32, 64, 128, 256), default=64)
+    parser.add_argument(
+        "--sweep_stage",
+        choices=("stage1", "stage2a", "stage2b", "stage3"),
+        default="stage1",
+    )
 
 
 def hyperparameter_suffix(args):
@@ -108,14 +114,18 @@ def export_reward_csv(log_root, csv_path):
 
 # ========== CONFIGURATION ==========
 PLAYGROUND_DIR = Path(__file__).resolve().parent
-LOG_DIR = PLAYGROUND_DIR / "logs"
-RESULTS_DIR = PLAYGROUND_DIR / "results"
 
 parser = argparse.ArgumentParser(description="Train the transformer ablation configuration.")
 add_pipeline_arguments(parser)
 args = parser.parse_args()
 if args.n_heads <= 0 or (2 * args.embedding_dim) % args.n_heads:
     parser.error("--n_heads must be positive and evenly divide 2 * --embedding_dim")
+
+STAGE_DIR = PLAYGROUND_DIR / "sweeps" / args.sweep_stage
+LOG_DIR = STAGE_DIR / "logs" / "training"
+RESULTS_DIR = STAGE_DIR / "results" / "training"
+MODEL_DIR = STAGE_DIR / "models" / "training"
+SCENARIO_DIR = STAGE_DIR / "scenarios"
 
 ALGORITHM = {"DQN": DQN, "PPO": PPO}[args.algo]
 mode = args.mode
@@ -130,7 +140,7 @@ pad = (mode == "padding")
 RUN_ID = make_training_run_id(args)
 extended = True
 
-TOTAL_TIMESTEPS = 15_000
+TOTAL_TIMESTEPS = 500_000
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -139,7 +149,7 @@ HYPERPARAMS = {
     "DQN": {
         "policy": "MlpPolicy",
         "verbose": 2,
-        "tensorboard_log": str(LOG_DIR / "training" / RUN_ID),
+        "tensorboard_log": str(LOG_DIR / RUN_ID),
         "device": device,
         "buffer_size": 500_000,
         "learning_starts": 10_000,
@@ -154,7 +164,7 @@ HYPERPARAMS = {
     "PPO": {
         "policy": "MlpPolicy",
         "verbose": 2,
-        "tensorboard_log": str(LOG_DIR / "training" / RUN_ID),
+        "tensorboard_log": str(LOG_DIR / RUN_ID),
         "device": device,
         "learning_rate": 3e-4,
         "n_steps": 2048,
@@ -171,7 +181,11 @@ HYPERPARAMS = {
 
 # ========== ENVIRONMENT SETUP ==========
 if extended:
-    path = str(PLAYGROUND_DIR / "scenarios" / "Scenario2.yaml")
+    base_scenario_path = PLAYGROUND_DIR / "scenarios" / "Scenario2.yaml"
+    path = str(copy_scenario_for_run(
+        base_scenario_path,
+        SCENARIO_DIR / f"{RUN_ID}.yaml",
+    ))
 else:
     path = str(inspect.getfile(CybORG))
     path = path[:-10] + '/Shared/Scenarios/Scenario2.yaml'
@@ -235,7 +249,8 @@ if episode_returns:
 
 # ========== SAVE MODEL ==========
 wrapper_type = "transformer" if transformer else "padding" if pad else "challenge"
-model_path = PLAYGROUND_DIR / RUN_ID
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+model_path = MODEL_DIR / RUN_ID
 model.save(str(model_path))
 print(f"Model saved to: {model_path}.zip")
 
@@ -245,5 +260,5 @@ if transformer or deepset:
     encoder.save_weights(str(encoder_path))
     print(f"Encoder weights saved to: {encoder_path}")
 
-csv_path = reward_csv_path(RESULTS_DIR / "training", "training", args)
-export_reward_csv(LOG_DIR / "training" / RUN_ID, csv_path)
+csv_path = reward_csv_path(RESULTS_DIR, "training", args)
+export_reward_csv(LOG_DIR / RUN_ID, csv_path)

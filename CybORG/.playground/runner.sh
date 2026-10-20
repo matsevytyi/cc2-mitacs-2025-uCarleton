@@ -12,6 +12,7 @@ DIST_LAMBDA=${4:-2.0}
 CLS_ALPHA=${5:-None}
 N_LAYERS=${6:-2}
 EMBED_DIM=${7:-64}
+SWEEP_STAGE=${8:-stage1}
 
 echo "========================================================"
 echo "[1/2] STATIC TRAINING: ALGO=$ALGO | K=$TOP_K | FOCUS=$FOCUS_MODE | LAMBDA=$DIST_LAMBDA | ALPHA=$CLS_ALPHA | L=$N_LAYERS | D=$EMBED_DIM"
@@ -25,18 +26,8 @@ python training_pipeline.py \
     --dist_lambda "$DIST_LAMBDA" \
     --cls_alpha "$CLS_ALPHA" \
     --n_layers "$N_LAYERS" \
-    --embedding_dim "$EMBED_DIM"
-
-python process_tensorboard_IEEE.py \
-    --phase training \
-    --algo "$ALGO" \
-    --mode transformer \
-    --top_k "$TOP_K" \
-    --focus_mode "$FOCUS_MODE" \
-    --dist_lambda "$DIST_LAMBDA" \
-    --cls_alpha "$CLS_ALPHA" \
-    --n_layers "$N_LAYERS" \
-    --embedding_dim "$EMBED_DIM"
+    --embedding_dim "$EMBED_DIM" \
+    --sweep_stage "$SWEEP_STAGE"
 
 echo "========================================================"
 echo "[2/2] DYNAMIC TUNING: ALGO=$ALGO | K=$TOP_K | FOCUS=$FOCUS_MODE | LAMBDA=$DIST_LAMBDA | ALPHA=$CLS_ALPHA | L=$N_LAYERS | D=$EMBED_DIM"
@@ -50,15 +41,5 @@ python final_tuning_pipeline.py \
     --dist_lambda "$DIST_LAMBDA" \
     --cls_alpha "$CLS_ALPHA" \
     --n_layers "$N_LAYERS" \
-    --embedding_dim "$EMBED_DIM"
-
-python process_tensorboard_IEEE.py \
-    --phase tuning \
-    --algo "$ALGO" \
-    --mode transformer \
-    --top_k "$TOP_K" \
-    --focus_mode "$FOCUS_MODE" \
-    --dist_lambda "$DIST_LAMBDA" \
-    --cls_alpha "$CLS_ALPHA" \
-    --n_layers "$N_LAYERS" \
-    --embedding_dim "$EMBED_DIM"
+    --embedding_dim "$EMBED_DIM" \
+    --sweep_stage "$SWEEP_STAGE"

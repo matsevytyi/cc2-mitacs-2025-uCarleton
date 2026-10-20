@@ -12,6 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from CybORG import CybORG
 from CybORG.Agents import RedMeanderAgent
 from CybORG.Agents.Wrappers import TransformerWrapper, PaddingWrapper, DeepSetsPermInvWrapper
+from scenario_shuffler import copy_scenario_for_run
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.logger import configure
 
@@ -37,6 +38,11 @@ def add_pipeline_arguments(parser):
     parser.add_argument("--n_layers", type=int, choices=(1, 2, 4), default=2)
     parser.add_argument("--n_heads", type=int, default=4)
     parser.add_argument("--embedding_dim", type=int, choices=(32, 64, 128, 256), default=64)
+    parser.add_argument(
+        "--sweep_stage",
+        choices=("stage1", "stage2a", "stage2b", "stage3"),
+        default="stage1",
+    )
 
 
 def hyperparameter_suffix(args):
@@ -108,14 +114,19 @@ def export_reward_csv(log_root, csv_path):
 # ========== CONFIGURATION ==========
 
 PLAYGROUND_DIR = Path(__file__).resolve().parent
-LOG_DIR = PLAYGROUND_DIR / "logs"
-RESULTS_DIR = PLAYGROUND_DIR / "results"
 
 parser = argparse.ArgumentParser(description="Tune the transformer ablation configuration.")
 add_pipeline_arguments(parser)
 args = parser.parse_args()
 if args.n_heads <= 0 or (2 * args.embedding_dim) % args.n_heads:
     parser.error("--n_heads must be positive and evenly divide 2 * --embedding_dim")
+
+STAGE_DIR = PLAYGROUND_DIR / "sweeps" / args.sweep_stage
+LOG_DIR = STAGE_DIR / "logs"
+RESULTS_DIR = STAGE_DIR / "results" / "tuning"
+MODEL_DIR = STAGE_DIR / "models" / "tuning"
+TRAINING_MODEL_DIR = STAGE_DIR / "models" / "training"
+SCENARIO_DIR = STAGE_DIR / "scenarios"
 
 ALGORITHM = {"DQN": DQN, "PPO": PPO}[args.algo]
 mode = args.mode
@@ -130,7 +141,7 @@ pad = (mode == "padding")
 OLD_RUN_ID = make_training_run_id(args)
 
 USE_PRETRAINED = True
-TOTAL_TIMESTEPS = 25_000
+TOTAL_TIMESTEPS = 450_000
 action_tag = (
     f"_{action_space_mode}_k{top_k}_{focus_mode}"
     if transformer and action_space_mode in ("default", "topk")
@@ -142,9 +153,12 @@ TENSORBOARD_LOG = LOG_DIR / "tuning" / RUN_ID
 
 device = 'cpu'
 
-base_dir = PLAYGROUND_DIR.parent
-scenario_name = f"Scenario2_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_{ALGORITHM.__name__}"
-SCENARIO_PATH = str(PLAYGROUND_DIR / "scenarios" / f"{scenario_name}.yaml")
+base_scenario_path = PLAYGROUND_DIR / "scenarios" / "Scenario2.yaml"
+scenario_id = f"{RUN_ID}_scenario"
+SCENARIO_PATH = str(copy_scenario_for_run(
+    base_scenario_path,
+    SCENARIO_DIR / f"{scenario_id}.yaml",
+))
 
 HYPERPARAMS = {
     "DQN": {
@@ -189,7 +203,9 @@ def create_cyborg_env(yaml_path: str):
 
 import sys
 
-outname = str(PLAYGROUND_DIR / f"{RUN_ID}_console_log.txt")
+console_log_dir = LOG_DIR / "console"
+console_log_dir.mkdir(parents=True, exist_ok=True)
+outname = str(console_log_dir / f"{RUN_ID}_console_log.txt")
 sys.stdout = open(outname, 'w', buffering=1)  # line buffering for real-time write
 
 # Optionally, also keep output in console:
@@ -220,7 +236,7 @@ if transformer:
         env_creator=create_cyborg_env,
         yaml_path=SCENARIO_PATH,
         max_actions=None if action_space_mode == "topk" else 240,
-        weights_path=str(PLAYGROUND_DIR / f"{OLD_RUN_ID}.encoder.pth"),
+        weights_path=str(TRAINING_MODEL_DIR / f"{OLD_RUN_ID}.encoder.pth"),
         top_k=top_k,
         embedding_dim=args.embedding_dim,
         n_heads=args.n_heads,
@@ -238,7 +254,7 @@ elif deepset:
         env_creator=create_cyborg_env,
         yaml_path=SCENARIO_PATH,
         max_actions=240,
-        weights_path=f"{OLD_RUN_ID}.encoder.pth"
+        weights_path=str(TRAINING_MODEL_DIR / f"{OLD_RUN_ID}.encoder.pth")
     )
 else:
     gym_env = PaddingWrapper(
@@ -257,7 +273,7 @@ gym_env.reset()
 # Create model
 if USE_PRETRAINED:
     model = ALGORITHM.load(
-        str(PLAYGROUND_DIR / OLD_RUN_ID),
+        str(TRAINING_MODEL_DIR / OLD_RUN_ID),
         env=gym_env,
         tensorboard_log=str(TENSORBOARD_LOG),
     )
@@ -278,13 +294,13 @@ recon_losses = deque(maxlen=100) if transformer else None
 total_steps = 0
 episode_count = 0
 
-# NEW: Force initial logging at step 0
-model.logger.record("rollout/ep_rew_mean", 0.0)
-model.logger.record("rollout/ep_len_mean", 0.0)
-if transformer:
-    init_recon = gym_env.encoder.recon_loss
-    model.logger.record("train/recon_loss", init_recon.item() if isinstance(init_recon, torch.Tensor) else float(init_recon))
-model.logger.dump(step=0)
+# Force initial logging at step 0
+# model.logger.record("rollout/ep_rew_mean", 0.0)
+# model.logger.record("rollout/ep_len_mean", 0.0)
+# if transformer:
+#     init_recon = gym_env.encoder.recon_loss
+#     model.logger.record("train/recon_loss", init_recon.item() if isinstance(init_recon, torch.Tensor) else float(init_recon))
+# model.logger.dump(step=0)
 
 print(f"Starting training with DYNAMIC topology")
 
@@ -349,7 +365,8 @@ if transformer:
 model.logger.dump(step=TOTAL_TIMESTEPS)
 
 # Save model
-out_name = PLAYGROUND_DIR / RUN_ID
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+out_name = MODEL_DIR / RUN_ID
 model.save(str(out_name))
 print(f"Saved model to {out_name}.zip")
 
@@ -364,7 +381,7 @@ print("\n" + "="*70)
 print("CONVERGENCE ANALYSIS SUMMARY")
 print("="*70)
 
-csv_path = reward_csv_path(RESULTS_DIR / "tuning", "tuning", args)
+csv_path = reward_csv_path(RESULTS_DIR, "tuning", args)
 export_reward_csv(TENSORBOARD_LOG, csv_path)
 
 # Calculate convergence metrics
