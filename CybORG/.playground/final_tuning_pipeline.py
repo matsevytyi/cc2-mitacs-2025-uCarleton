@@ -1,4 +1,6 @@
 import os, sys, inspect
+import argparse
+from pathlib import Path
 import numpy as np
 import torch
 import random
@@ -13,41 +15,142 @@ from CybORG.Agents.Wrappers import TransformerWrapper, PaddingWrapper, DeepSetsP
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.logger import configure
 
+
+def parse_optional_float(value):
+    if value.lower() in ("none", "auto"):
+        return None
+    return float(value)
+
+
+def add_pipeline_arguments(parser):
+    parser.add_argument("--algo", choices=("DQN", "PPO"), default="PPO")
+    parser.add_argument("--mode", choices=("transformer", "ds", "padding"), default="transformer")
+    parser.add_argument(
+        "--action_space_mode",
+        choices=("default", "topk", "pad", "cutoff"),
+        default="topk",
+    )
+    parser.add_argument("--top_k", type=int, choices=(2, 4, 8, 16), default=8)
+    parser.add_argument("--focus_mode", choices=("stateful", "salience"), default="stateful")
+    parser.add_argument("--dist_lambda", type=float, default=2.0)
+    parser.add_argument("--cls_alpha", type=parse_optional_float, default=None)
+    parser.add_argument("--n_layers", type=int, choices=(1, 2, 4), default=2)
+    parser.add_argument("--n_heads", type=int, default=4)
+    parser.add_argument("--embedding_dim", type=int, choices=(32, 64, 128, 256), default=64)
+
+
+def hyperparameter_suffix(args):
+    cls_alpha = "auto" if args.cls_alpha is None else format(args.cls_alpha, ".12g")
+    return (
+        f"topk{args.top_k}_focus-{args.focus_mode}_layers{args.n_layers}"
+        f"_heads{args.n_heads}_embed{args.embedding_dim}"
+        f"_clsalpha{cls_alpha}_distlambda{format(args.dist_lambda, '.12g')}"
+    )
+
+
+def make_training_run_id(args):
+    action_tag = (
+        f"_{args.action_space_mode}_k{args.top_k}_{args.focus_mode}"
+        if args.mode == "transformer" and args.action_space_mode in ("default", "topk")
+        else f"_{args.action_space_mode}" if args.mode == "transformer" else ""
+    )
+    return (
+        f"TRAIN_{args.mode}{action_tag}_{hyperparameter_suffix(args)}"
+        f"_{args.algo}_vs_RedMeander"
+    )
+
+
+def reward_csv_path(results_dir, phase, args):
+    stage = {"training": 0, "tuning": 1}[phase]
+    return results_dir / (
+        f"{stage}_{args.algo}_{args.mode}_{hyperparameter_suffix(args)}.csv"
+    )
+
+
+def export_reward_csv(log_root, csv_path):
+    import csv
+    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+    event_files = []
+    for root, _, files in os.walk(log_root):
+        event_files.extend(
+            Path(root) / name
+            for name in files
+            if name.startswith("events.out.tfevents")
+        )
+
+    if not event_files:
+        raise RuntimeError(f"No TensorBoard event files found under {log_root}")
+
+    latest_event_file = max(event_files, key=lambda path: path.stat().st_mtime)
+    accumulator = EventAccumulator(
+        str(latest_event_file.parent),
+        size_guidance={"scalars": 0},
+    )
+    accumulator.Reload()
+    if "rollout/ep_rew_mean" not in accumulator.Tags().get("scalars", []):
+        raise RuntimeError(
+            "No rollout/ep_rew_mean scalars found in the latest TensorBoard run "
+            f"{latest_event_file.parent}"
+        )
+
+    rewards = {
+        event.step: event.value
+        for event in accumulator.Scalars("rollout/ep_rew_mean")
+    }
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(("Step", "Value"))
+        writer.writerows(sorted(rewards.items()))
+    print(f"Reward CSV saved to: {csv_path}")
+
 # ========== CONFIGURATION ==========
 
-ALGORITHM = DQN
+PLAYGROUND_DIR = Path(__file__).resolve().parent
+LOG_DIR = PLAYGROUND_DIR / "logs"
+RESULTS_DIR = PLAYGROUND_DIR / "results"
 
-mode = "transformer" # "transformer", "ds", or "padding"
-action_space_mode = "topk" # "topk", "pad", or "cutoff"
-top_k = 8
-focus_mode = "stateful" # "stateful" or "salience"
+parser = argparse.ArgumentParser(description="Tune the transformer ablation configuration.")
+add_pipeline_arguments(parser)
+args = parser.parse_args()
+if args.n_heads <= 0 or (2 * args.embedding_dim) % args.n_heads:
+    parser.error("--n_heads must be positive and evenly divide 2 * --embedding_dim")
+
+ALGORITHM = {"DQN": DQN, "PPO": PPO}[args.algo]
+mode = args.mode
+action_space_mode = args.action_space_mode
+top_k = args.top_k
+focus_mode = args.focus_mode
 
 transformer = (mode == "transformer")
 deepset = (mode == "ds")
 pad = (mode == "padding")
 
-method = "TRAIN"
-
-action_tag = f"_{action_space_mode}_k{top_k}_{focus_mode}" if (transformer and action_space_mode == "topk") else f"_{action_space_mode}" if transformer else ""
-OLD_RUN_ID = f"{method}_{mode}{action_tag}_{ALGORITHM.__name__}_vs_RedMeander"
+OLD_RUN_ID = make_training_run_id(args)
 
 USE_PRETRAINED = True
-TOTAL_TIMESTEPS = 450_000
+TOTAL_TIMESTEPS = 25_000
+action_tag = (
+    f"_{action_space_mode}_k{top_k}_{focus_mode}"
+    if transformer and action_space_mode in ("default", "topk")
+    else f"_{action_space_mode}" if transformer else ""
+)
 model_label = f"Transformer{action_tag}" if transformer else "Padding" if pad else "DeepSets"
-RUN_ID = f"{ALGORITHM.__name__}_{model_label}_tuning_x150_extended_dynamic_topology"
-TENSORBOARD_LOG = f"./logs/{RUN_ID}"
+RUN_ID = f"{ALGORITHM.__name__}_{model_label}_{hyperparameter_suffix(args)}_tuning_x150_extended_dynamic_topology"
+TENSORBOARD_LOG = LOG_DIR / "tuning" / RUN_ID
 
 device = 'cpu'
 
-base_dir = os.path.dirname(os.path.dirname(__file__))
+base_dir = PLAYGROUND_DIR.parent
 scenario_name = f"Scenario2_{'Transformer' if transformer else 'Padding' if pad else 'DeepSets'}_{ALGORITHM.__name__}"
-SCENARIO_PATH = os.path.join(base_dir, f".playground/scenarios/{scenario_name}.yaml")
+SCENARIO_PATH = str(PLAYGROUND_DIR / "scenarios" / f"{scenario_name}.yaml")
 
 HYPERPARAMS = {
     "DQN": {
         "policy": "MlpPolicy",
         "verbose": 2,
-        "tensorboard_log": f"./logs/{RUN_ID}",
+        "tensorboard_log": str(TENSORBOARD_LOG),
         "device": device,
         "buffer_size": 500_000,
         "learning_starts": 10_000,
@@ -62,7 +165,7 @@ HYPERPARAMS = {
     "PPO": {
         "policy": "MlpPolicy",
         "verbose": 2,
-        "tensorboard_log": f"./logs/{RUN_ID}",
+        "tensorboard_log": str(TENSORBOARD_LOG),
         "device": device,
         "learning_rate": 5e-5,
         "n_steps": 4096,
@@ -86,7 +189,7 @@ def create_cyborg_env(yaml_path: str):
 
 import sys
 
-outname = f"{RUN_ID}_console_log.txt"
+outname = str(PLAYGROUND_DIR / f"{RUN_ID}_console_log.txt")
 sys.stdout = open(outname, 'w', buffering=1)  # line buffering for real-time write
 
 # Optionally, also keep output in console:
@@ -101,7 +204,7 @@ class Tee(object):
         for f in self.files:
             f.flush()
 
-sys.stdout = Tee(sys.__stdout__, open(outname, 'w', buffering=1))
+sys.stdout = Tee(sys.__stdout__, open(outname, 'a', buffering=1))
 
 # ========== TRAINING PIPELINE ==========
 
@@ -117,10 +220,15 @@ if transformer:
         env_creator=create_cyborg_env,
         yaml_path=SCENARIO_PATH,
         max_actions=None if action_space_mode == "topk" else 240,
-        weights_path=f"{OLD_RUN_ID}.encoder.pth",
-        top_k=top_k
+        weights_path=str(PLAYGROUND_DIR / f"{OLD_RUN_ID}.encoder.pth"),
+        top_k=top_k,
+        embedding_dim=args.embedding_dim,
+        n_heads=args.n_heads,
+        n_layers=args.n_layers,
+        focus_mode=focus_mode,
+        cls_alpha=args.cls_alpha,
+        dist_lambda=args.dist_lambda,
     )
-    gym_env.encoder.focus_mode = focus_mode
 elif deepset:
     gym_env = DeepSetsPermInvWrapper(
         agent_name='Blue',
@@ -148,14 +256,18 @@ gym_env.reset()
 
 # Create model
 if USE_PRETRAINED:
-    model = ALGORITHM.load(OLD_RUN_ID, env=gym_env, tensorboard_log=TENSORBOARD_LOG)
+    model = ALGORITHM.load(
+        str(PLAYGROUND_DIR / OLD_RUN_ID),
+        env=gym_env,
+        tensorboard_log=str(TENSORBOARD_LOG),
+    )
 else:
     hyperparams = HYPERPARAMS[ALGORITHM.__name__]
     model = ALGORITHM(env=gym_env, **hyperparams)
 
 # ========== MANUAL LOGGING FOR CONVERGENCE ANALYSIS ==========
 # Configure TensorBoard logger
-logger = configure(folder=TENSORBOARD_LOG, format_strings=["tensorboard", "stdout"])
+logger = configure(folder=str(TENSORBOARD_LOG), format_strings=["tensorboard", "stdout"])
 model.set_logger(logger)
 
 # Track metrics for convergence analysis
@@ -237,19 +349,23 @@ if transformer:
 model.logger.dump(step=TOTAL_TIMESTEPS)
 
 # Save model
-out_name = f"{RUN_ID}"
-model.save(out_name)
+out_name = PLAYGROUND_DIR / RUN_ID
+model.save(str(out_name))
 print(f"Saved model to {out_name}.zip")
 
 if transformer or deepset:
     encoder = gym_env.encoder
-    encoder.save_weights(out_name + ".encoder.pth")
-    print(f"Encoder weights saved to: {out_name}.encoder.pth")
+    encoder_path = Path(f"{out_name}.encoder.pth")
+    encoder.save_weights(str(encoder_path))
+    print(f"Encoder weights saved to: {encoder_path}")
 
 # ========== CONVERGENCE ANALYSIS SUMMARY ==========
 print("\n" + "="*70)
 print("CONVERGENCE ANALYSIS SUMMARY")
 print("="*70)
+
+csv_path = reward_csv_path(RESULTS_DIR / "tuning", "tuning", args)
+export_reward_csv(TENSORBOARD_LOG, csv_path)
 
 # Calculate convergence metrics
 rewards_arr = np.array(episode_rewards)

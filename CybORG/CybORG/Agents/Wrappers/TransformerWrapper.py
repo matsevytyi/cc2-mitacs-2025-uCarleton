@@ -21,7 +21,9 @@ class TransformerWrapper(Env, BaseWrapper):
             reward_threshold=None, max_steps=None, max_actions=None,
             action_space_mode="default", knowledge_update_mode="train",
             env_creator=None, yaml_path=None,
-            device='cpu', version="ip_local", weights_path=None, top_k=8):
+            device='cpu', version="ip_local", weights_path=None, top_k=8,
+            embedding_dim=64, n_heads=4, n_layers=2,
+            focus_mode="stateful", cls_alpha=None, dist_lambda=2.0):
         super().__init__(raw_cyborg, agent)
         self.agent_name = agent_name
         if agent_name.lower() == 'red':
@@ -36,6 +38,12 @@ class TransformerWrapper(Env, BaseWrapper):
         self.raw_cyborg = raw_cyborg
         self.device = device
         self.top_k = top_k
+        self.embedding_dim = embedding_dim
+        self.n_heads = n_heads
+        self.n_layers = n_layers
+        self.focus_mode = focus_mode
+        self.cls_alpha = cls_alpha
+        self.dist_lambda = dist_lambda
         self.max_actions = max_actions
         self.action_space_mode = action_space_mode  # "default"/"topk", "pad", or "cutoff"
         self.use_topk = (action_space_mode in ("default", "topk")) and bool(top_k)
@@ -57,7 +65,6 @@ class TransformerWrapper(Env, BaseWrapper):
             self.env_creator = env_creator
             self.yaml_path = yaml_path
             
-        embedding_dim = 64  # transformer embedding dimension
         token_dim = embedding_dim * 2  # 64D obs + 64D IP
         
         if self.use_topk:
@@ -82,10 +89,15 @@ class TransformerWrapper(Env, BaseWrapper):
         self.encoder = TransformerStateEncoderV2(
             observation_space=self.observation_space,
             embedding_dim=embedding_dim,
+            n_heads=n_heads,
+            n_layers=n_layers,
             initial_host_count=len(self.host_order),
             mode=self.knowledge_update_mode,
             top_k=self.top_k,
-            use_candidate_retrieval=self.use_topk
+            focus_mode=self.focus_mode,
+            use_candidate_retrieval=self.use_topk,
+            cls_alpha=cls_alpha,
+            dist_lambda=dist_lambda
         ).to(self.device)
 
         self.reward_threshold = reward_threshold
@@ -253,11 +265,16 @@ class TransformerWrapper(Env, BaseWrapper):
         # Reinitialize encoder with new host count
         self.encoder = TransformerStateEncoderV2(
             observation_space=self.observation_space,
-            embedding_dim=64,
+            embedding_dim=self.embedding_dim,
+            n_heads=self.n_heads,
+            n_layers=self.n_layers,
             initial_host_count=len(self.host_order),
             mode=self.knowledge_update_mode,
             top_k=self.top_k,
-            use_candidate_retrieval=self.use_topk
+            focus_mode=self.focus_mode,
+            use_candidate_retrieval=self.use_topk,
+            cls_alpha=self.cls_alpha,
+            dist_lambda=self.dist_lambda
         ).to(self.device)
 
         self.encoder.load_weights_from_dict(old_weights)
