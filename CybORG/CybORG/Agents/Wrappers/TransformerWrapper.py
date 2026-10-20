@@ -248,7 +248,6 @@ class TransformerWrapper(Env, BaseWrapper):
             'obs_embed': self.encoder.obs_embed.state_dict(),
             'ip_byte_embed': self.encoder.ip_byte_embed.state_dict(),
             'cls_token': self.encoder.cls_token.data,
-            'token_head_from_cls': self.encoder.token_head_from_cls.state_dict(),
         }
 
         # Reinitialize encoder with new host count

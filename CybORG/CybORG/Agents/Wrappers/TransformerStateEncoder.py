@@ -27,11 +27,15 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
         mode='train',
         top_k=8,
         focus_mode='stateful',
-        use_candidate_retrieval=True
+        use_candidate_retrieval=True,
+        cls_alpha=None, # allows to balance rep<CLS> versus other vectors so that we retain Rep<CLS> as our ptimary map.
+        dist_lambda=2.0 # multiplier applied to x in our distance function for Proactive K/2 Slots as y = 2e^(-lambda*x), increasing (1 -> inf) focuses more on closer devices, while decreasing (1 -> 0) focuses on all devices more evenly
     ):
         self.top_k = top_k
         self.focus_mode = focus_mode  # 'stateful' (tracks last acted host) or 'salience' (tracks #1 anomaly)
         self.use_candidate_retrieval = use_candidate_retrieval
+        self.cls_alpha = float(np.sqrt(top_k)) if cls_alpha is None else float(cls_alpha)
+        self.dist_lambda = dist_lambda
 
         total_embed_dim = embedding_dim * 2
         out_features_dim = (1 + top_k) * total_embed_dim if use_candidate_retrieval else total_embed_dim
@@ -78,11 +82,7 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
 
         self.mode = mode
 
-        # training: Bilinear / Hadamard IP-Query Reconstruction Head (invariant to dynamic self.H)
-        self.token_head_from_cls = nn.ModuleDict({
-            'ip_query_proj': nn.Linear(self.embedding_dim // 2, self.embedding_dim),
-            'status_recon_head': nn.Linear(self.embedding_dim, self.embedding_dim // 2)
-        })
+        self.token_head_from_cls = nn.Linear(self.embedding_dim, self.H * self.embedding_dim)
 
         self.recon_criterion = nn.MSELoss()
 
@@ -166,17 +166,9 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
         self.last_cls_output = cls_output
         
         if mode == "train": 
-            # Split host_tokens into 64D status targets (obs_chunks) and 64D IP queries (ip_chunks)
-            half_dim = self.embedding_dim // 2
-            status_targets = host_tokens[:, :, :half_dim]  # [batch, H, D // 2]
-            ip_queries = host_tokens[:, :, half_dim:]      # [batch, H, D // 2]
-
-            # Query Rep_<CLS> with each host's IP embedding via Hadamard product
-            ip_filter = self.token_head_from_cls['ip_query_proj'](ip_queries)           # [batch, H, D]
-            queried_cls = cls_output.unsqueeze(1) * ip_filter                           # [batch, H, D]
-            reconstruction = self.token_head_from_cls['status_recon_head'](queried_cls) # [batch, H, D // 2]
-
-            recon_loss = self.recon_criterion(reconstruction, status_targets.detach())
+            reconstruction = self.token_head_from_cls(cls_output)
+            reconstruction = reconstruction.view(batch_size, self.H, self.embedding_dim)
+            recon_loss = self.recon_criterion(reconstruction, host_tokens.detach())
             self.recon_loss = recon_loss
 
             # Weighted backward propagation
@@ -226,7 +218,7 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
             enc_hosts = encoded_host_tokens[0]        # [H, 128]
             cls_vec = cls_output[0].unsqueeze(0)      # [1, 128]
 
-            # 1. Compute Salience Score: L2 distance from mean host token + Cosine similarity to <CLS>
+            # 1. Compute Salience Score: L2 distance from mean host token + Cosine similarity to <CLS> – # TODO: switch to distance to focus_host and lets ignore <CLS>, right?
             mean_token = enc_hosts.mean(dim=0, keepdim=True)                    # [1, 128]
             token_dev = torch.norm(enc_hosts - mean_token, p=2, dim=-1)         # [H]
             cls_sim = F.cosine_similarity(enc_hosts, cls_vec, dim=-1)           # [H]
@@ -266,9 +258,12 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
                 sorted_rem_indices = rem_tensor[sorted_rem_order]
 
                 if len(sorted_rem_indices) >= k_quantile:
-                    q_positions = torch.linspace(
-                        0, len(sorted_rem_indices) - 1, steps=k_quantile, device=ip_chunks.device
-                    ).round().long()
+                    u = torch.linspace(0.0, 1.0, steps=k_quantile, device=ip_chunks.device)
+                    if self.dist_lambda > 0:
+                        weights = (torch.exp(self.dist_lambda * u) - 1.0) / (np.exp(self.dist_lambda) - 1.0)
+                    else:
+                        weights = u
+                    q_positions = (weights * (len(sorted_rem_indices) - 1)).round().long()
                     quantile_indices = sorted_rem_indices[q_positions].tolist()
                 else:
                     quantile_indices = sorted_rem_indices.tolist()
@@ -286,7 +281,7 @@ class TransformerStateEncoderV2(BaseFeaturesExtractor):
         # Concatenate Rep_<CLS> with the K selected encoded_host_tokens (preserves gradients if needed)
         selected_host_tokens = encoded_host_tokens[:, candidate_idx_tensor, :]  # [B, K, D]
         flattened_slots = selected_host_tokens.reshape(batch_size, self.top_k * self.embedding_dim)
-        rl_state = torch.cat([cls_output, flattened_slots], dim=-1)             # [B, (1 + K) * D]
+        rl_state = torch.cat([self.cls_alpha * cls_output, flattened_slots], dim=-1)
 
         candidate_host_names = [active_host_order[i] for i in candidate_indices[:self.top_k]]
         return rl_state, candidate_host_names
